@@ -1,0 +1,2 @@
+# ghostable
+Ghostable CLI client.
