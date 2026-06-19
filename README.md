@@ -7,9 +7,8 @@ and signed-style activity records.
 This client does not call Ghostable servers. Encrypted value files, public
 device records, signed policy, signed activity, environment keys, and access
 grants live under `.ghostable/` and are intended to be committed to git. Private
-device keys are stored outside the repository. On macOS they are stored in the
-OS Keychain; tests and disposable sandboxes can set `GHOSTABLE_KEYSTORE`
-for a restrictive file-backed identity store.
+device keys are stored outside the repository in the platform's native secret
+store when available, or in a restrictive file-backed identity store otherwise.
 
 ## Build
 
@@ -118,10 +117,12 @@ Committed project files:
 .ghostable/schemas/<env>.yaml
 ```
 
-Local-only private key:
+Local-only private identity:
 
 ```text
-macOS Keychain service: dev.ghostable.identity.<project-id>
+macOS:      Keychain service dev.ghostable.identity.<project-id>
+Windows:    Credential Manager target dev.ghostable.identity.<project-id>
+Linux/Unix: ${XDG_CONFIG_HOME:-~/.config}/ghostable/identities/<project-id>.json
 ```
 
 When `GHOSTABLE_KEYSTORE` is set, private identity material is written to:

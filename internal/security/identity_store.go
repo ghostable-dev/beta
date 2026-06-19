@@ -21,7 +21,7 @@ func NewIdentityStore() (IdentityStore, error) {
 	if override := strings.TrimSpace(os.Getenv("GHOSTABLE_KEYSTORE")); override != "" {
 		return IdentityStore{fileRoot: override}, nil
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		return IdentityStore{}, nil
 	}
 	configDir, err := os.UserConfigDir()
@@ -35,6 +35,9 @@ func (s IdentityStore) Load(projectID string) (domain.LocalIdentityRecord, error
 	if s.usesKeychain() {
 		return s.loadKeychain(projectID)
 	}
+	if s.usesWindowsCredentialManager() {
+		return s.loadWindowsCredential(projectID)
+	}
 	return s.loadFile(projectID)
 }
 
@@ -42,12 +45,18 @@ func (s IdentityStore) Save(identity domain.LocalIdentityRecord) error {
 	if s.usesKeychain() {
 		return s.saveKeychain(identity)
 	}
+	if s.usesWindowsCredentialManager() {
+		return s.saveWindowsCredential(identity)
+	}
 	return s.saveFile(identity)
 }
 
 func (s IdentityStore) Delete(projectID string) error {
 	if s.usesKeychain() {
 		return s.deleteKeychain(projectID)
+	}
+	if s.usesWindowsCredentialManager() {
+		return s.deleteWindowsCredential(projectID)
 	}
 	err := os.Remove(s.filePath(projectID))
 	if err != nil && !os.IsNotExist(err) {
@@ -60,11 +69,18 @@ func (s IdentityStore) Path(projectID string) string {
 	if s.usesKeychain() {
 		return "macOS Keychain: " + keychainService(projectID)
 	}
+	if s.usesWindowsCredentialManager() {
+		return "Windows Credential Manager: " + windowsCredentialTarget(projectID)
+	}
 	return s.filePath(projectID)
 }
 
 func (s IdentityStore) usesKeychain() bool {
 	return s.fileRoot == "" && runtime.GOOS == "darwin"
+}
+
+func (s IdentityStore) usesWindowsCredentialManager() bool {
+	return s.fileRoot == "" && runtime.GOOS == "windows"
 }
 
 func (s IdentityStore) loadFile(projectID string) (domain.LocalIdentityRecord, error) {
