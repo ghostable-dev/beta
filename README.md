@@ -1,5 +1,11 @@
 # Ghostable CLI
 
+[![Release](https://img.shields.io/github/v/release/ghostable-dev/beta?sort=semver)](https://github.com/ghostable-dev/beta/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ghostable-dev/beta/total?label=downloads)](https://github.com/ghostable-dev/beta/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/ghostable-dev/beta/ci.yml?branch=main&label=ci)](https://github.com/ghostable-dev/beta/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/ghostable-dev/beta)](LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-signed%20%26%20notarized-2ea44f)](https://github.com/ghostable-dev/beta/releases/latest)
+
 Ghostable is a server-less CLI for local-first environment management:
 projects, environments, variables, devices, schema validation, agent guidance,
 and signed-style activity records.
