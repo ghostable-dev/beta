@@ -16,28 +16,6 @@ store when available, or in a restrictive file-backed identity store otherwise.
 make build
 ```
 
-## Release
-
-GoReleaser builds GitHub Release artifacts for macOS, Linux, and Windows when a
-version tag is pushed:
-
-```sh
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
-```
-
-The release workflow also publishes a Homebrew cask to
-`ghostable-dev/homebrew-ghostable`. The main repository needs a GitHub Actions secret
-named `HOMEBREW_TAP_GITHUB_TOKEN` with contents write access to that tap
-repository.
-
-For local checks:
-
-```sh
-goreleaser check
-goreleaser release --snapshot --clean --skip=publish
-```
-
 ## Basic Flow
 
 ```sh
