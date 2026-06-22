@@ -152,7 +152,10 @@ func TestRunStatusPrintsBannerAndInventory(t *testing.T) {
 	for _, expected := range []string{
 		"▗▄▄▖",
 		"Ghostable status",
-		"Project       Status Project",
+		warn("Project      "),
+		success("Status Project"),
+		warn("Inventory"),
+		success("1"),
 		"Inventory",
 		"Environments",
 		"default",

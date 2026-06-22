@@ -44,6 +44,26 @@ func TestRunInteractiveRootShowsHeadingBeforeStandardMenu(t *testing.T) {
 	}
 }
 
+func TestRootHelpIncludesSchemaCommand(t *testing.T) {
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "--help"}, strings.NewReader(""), &output, &output)
+
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{
+		"ghostable schema <command> [options]",
+		"schema",
+		"Manage validation schema files and rules",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected root help to contain %q:\n%s", expected, text)
+		}
+	}
+}
+
 func TestPrintRunErrorShowsCleanCanceledMessageForPromptInterrupt(t *testing.T) {
 	var output bytes.Buffer
 
@@ -58,6 +78,39 @@ func TestPrintRunErrorShowsCleanCanceledMessageForPromptInterrupt(t *testing.T) 
 	}
 	if strings.Contains(text, "Error:") || strings.Contains(text, "^C") {
 		t.Fatalf("did not expect generic error output for prompt cancellation:\n%s", text)
+	}
+}
+
+func TestServerStyleRootCommandsAreUnknown(t *testing.T) {
+	commands := []string{"backup", "login", "logout", "register"}
+
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			var output bytes.Buffer
+			runner := NewRunner([]string{"ghostable", command}, strings.NewReader(""), &output, &output)
+
+			err := runner.Run()
+			if err == nil {
+				t.Fatal("expected command to be unknown")
+			}
+			expected := `unknown command "` + command + `"`
+			if !strings.Contains(err.Error(), expected) {
+				t.Fatalf("expected %q, got %q", expected, err.Error())
+			}
+		})
+	}
+}
+
+func TestProjectRootCommandIsUnknown(t *testing.T) {
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "project"}, strings.NewReader(""), &output, &output)
+
+	err := runner.Run()
+	if err == nil {
+		t.Fatal("expected project command to be unknown")
+	}
+	if !strings.Contains(err.Error(), `unknown command "project"`) {
+		t.Fatalf("expected project command to be unknown, got %v", err)
 	}
 }
 

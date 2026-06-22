@@ -11,12 +11,12 @@ import (
 	"github.com/ghostable-dev/beta/internal/store"
 )
 
-func TestRunAgentCredentialCreateCreatesToken(t *testing.T) {
+func TestRunAccessCreateCreatesToken(t *testing.T) {
 	root := setupRepoForEnvCommandTest(t)
 
 	var output bytes.Buffer
 	runner := NewRunner([]string{
-		"ghostable", "agent", "credential", "create",
+		"ghostable", "access", "create",
 		"--name", "build",
 		"--kind", "access",
 		"--grant", "default:reader",
@@ -67,6 +67,21 @@ func TestRunAgentCredentialCreateCreatesToken(t *testing.T) {
 	}
 }
 
+func TestRunAgentCredentialCommandIsUnknown(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "agent", "credential", "create"}, strings.NewReader(""), &output, &output)
+
+	err := runner.Run()
+	if err == nil {
+		t.Fatal("expected agent credential command to be unknown")
+	}
+	if !strings.Contains(err.Error(), `unknown agent command "credential"`) {
+		t.Fatalf("expected agent credential command to be unknown, got %v", err)
+	}
+}
+
 func TestRunAgentsAlias(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
@@ -80,12 +95,12 @@ func TestRunAgentsAlias(t *testing.T) {
 	}
 }
 
-func TestRunAgentCredentialCreateUsesSelectors(t *testing.T) {
+func TestRunAccessCreateUsesSelectors(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
-	input := strings.NewReader("build\n2\n1\n1\n")
+	input := strings.NewReader("build\n3\n1\n1\n")
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "agent", "credential", "create"}, input, &output, &output)
+	runner := NewRunner([]string{"ghostable", "access", "create"}, input, &output, &output)
 	runner.interactive = true
 	runner.prompts = prompt.New(input, &output)
 
@@ -129,12 +144,12 @@ func TestRunDeviceCreateDefaultsToAccessKind(t *testing.T) {
 	}
 }
 
-func TestRunAgentCredentialCreateNormalizesDeployKindToAccess(t *testing.T) {
+func TestRunAccessCreateNormalizesDeployKindToAccess(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
 	var output bytes.Buffer
 	runner := NewRunner([]string{
-		"ghostable", "agent", "credential", "create",
+		"ghostable", "access", "create",
 		"--name", "old-deploy-name",
 		"--kind", "deploy",
 		"--grant", "default:reader",

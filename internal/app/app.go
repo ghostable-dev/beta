@@ -106,12 +106,8 @@ func (r *Runner) Run() error {
 		return r.runDevice(args[2:])
 	case "device":
 		return r.runDevice(args[2:])
-	case "project":
-		return r.runProject(args[2:])
 	case "deploy":
 		return r.runDeploy(args[2:])
-	case "backup", "login", "logout", "register":
-		return fmt.Errorf("`ghostable %s` is not used by Ghostable; this client is local-only and does not call Ghostable servers", args[1])
 	default:
 		return fmt.Errorf("unknown command %q", args[1])
 	}
@@ -135,6 +131,10 @@ func warn(value string) string {
 	return "\033[33m" + value + "\033[0m"
 }
 
+func muted(value string) string {
+	return "\033[2m" + value + "\033[0m"
+}
+
 func danger(value string) string {
 	return "\033[31m" + value + "\033[0m"
 }
@@ -150,10 +150,11 @@ var rootCommandOptions = []commandOption{
 	{Label: "status", Description: "Show local project status"},
 	{Label: "env", Description: "Manage environments and encrypted values"},
 	{Label: "var", Description: "Manage individual variables"},
+	{Label: "schema", Description: "Manage validation schema files and rules"},
 	{Label: "review", Description: "Review code changes against encrypted ENV state"},
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
 	{Label: "scan", Description: "Find hard-coded secrets"},
-	{Label: "agents", Value: "agent", Description: "Print agent guidance and credentials"},
+	{Label: "agents", Value: "agent", Description: "Print agent guidance"},
 	{Label: "access", Description: "Manage devices and access grants"},
 }
 
@@ -231,6 +232,7 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable status [--json]")
 	fmt.Fprintln(r.out, "  ghostable env <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable var <command> [options]")
+	fmt.Fprintln(r.out, "  ghostable schema <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable review --base <ref> [options]")
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")
 	fmt.Fprintln(r.out, "  ghostable scan [paths...] [options]")
@@ -258,6 +260,10 @@ func (r *Runner) openRepo() (store.Repository, error) {
 }
 
 func (r *Runner) selectEnvironment(repo store.Repository, provided string) (string, error) {
+	return r.selectEnvironmentWithLabel(repo, provided, "Select an environment", "env")
+}
+
+func (r *Runner) selectEnvironmentWithLabel(repo store.Repository, provided string, label string, missingFlag string) (string, error) {
 	if provided != "" {
 		return provided, nil
 	}
@@ -270,14 +276,14 @@ func (r *Runner) selectEnvironment(repo store.Repository, provided string) (stri
 		return envs[0].Name, nil
 	}
 	if !r.interactive {
-		return "", errors.New("pass --env to select an environment")
+		return "", fmt.Errorf("pass --%s to select an environment", missingFlag)
 	}
 
 	choices := make([]string, 0, len(envs))
 	for _, env := range envs {
 		choices = append(choices, env.Name)
 	}
-	return r.prompts.Select("Select an environment", choices, 0)
+	return r.prompts.Select(label, choices, 0)
 }
 
 func (r *Runner) selectEnvironmentExcept(repo store.Repository, provided string, excluded string, label string, missingFlag string) (string, error) {

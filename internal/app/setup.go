@@ -238,27 +238,27 @@ func (r *Runner) printStatus(repo store.Repository, envs []domain.Environment, d
 	fmt.Fprintln(r.out, "------------------------------------------------------------")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Ghostable status"))
-	fmt.Fprintf(r.out, "Project       %s\n", repo.Manifest.Name)
-	fmt.Fprintf(r.out, "Root          %s\n", repo.Root)
-	fmt.Fprintf(r.out, "Manifest      %s\n", repo.ManifestPath)
-	fmt.Fprintf(r.out, "Local key     %s\n", repo.KeyPath())
-	fmt.Fprintf(r.out, "Device        %s\n", statusLocalDevice(repo, devices))
+	r.printStatusField("Project", repo.Manifest.Name)
+	r.printStatusField("Root", repo.Root)
+	r.printStatusField("Manifest", repo.ManifestPath)
+	r.printStatusField("Local key", repo.KeyPath())
+	r.printStatusField("Device", statusLocalDevice(repo, devices))
 	if stack := statusStack(repo.Manifest); stack != "" {
-		fmt.Fprintf(r.out, "Stack         %s\n", stack)
+		r.printStatusField("Stack", stack)
 	}
 	if repo.Manifest.DeployTarget != "" {
-		fmt.Fprintf(r.out, "Deploy target %s\n", repo.Manifest.DeployTarget)
+		r.printStatusField("Deploy target", repo.Manifest.DeployTarget)
 	}
 	if repo.Manifest.ActivityMode != "" {
-		fmt.Fprintf(r.out, "Activity      %s\n", repo.Manifest.ActivityMode)
+		r.printStatusField("Activity", repo.Manifest.ActivityMode)
 	}
 
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Inventory"))
-	fmt.Fprintf(r.out, "  Environments  %d\n", len(envs))
-	fmt.Fprintf(r.out, "  Devices       %d\n", len(devices))
-	fmt.Fprintf(r.out, "  Values        %d\n", totalValues)
-	fmt.Fprintf(r.out, "  Requests      %d pending\n", pendingRequests)
+	printStatusInventoryRow(r, "Environments", fmt.Sprintf("%d", len(envs)))
+	printStatusInventoryRow(r, "Devices", fmt.Sprintf("%d", len(devices)))
+	printStatusInventoryRow(r, "Values", fmt.Sprintf("%d", totalValues))
+	printStatusInventoryRow(r, "Requests", fmt.Sprintf("%d pending", pendingRequests))
 
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Environments"))
@@ -282,9 +282,17 @@ func (r *Runner) printStatus(repo store.Repository, envs []domain.Environment, d
 	}
 }
 
+func (r *Runner) printStatusField(label string, value string) {
+	fmt.Fprintf(r.out, "%s  %s\n", warn(fmt.Sprintf("%-13s", label)), success(value))
+}
+
+func printStatusInventoryRow(r *Runner, label string, value string) {
+	fmt.Fprintf(r.out, "  %s  %s\n", warn(fmt.Sprintf("%-12s", label)), success(value))
+}
+
 func printStatusEnvironmentRows(r *Runner, envs []domain.Environment, counts map[string]int) {
 	if len(envs) == 0 {
-		fmt.Fprintln(r.out, "  none")
+		fmt.Fprintln(r.out, "  "+muted("none"))
 		return
 	}
 
@@ -295,16 +303,21 @@ func printStatusEnvironmentRows(r *Runner, envs []domain.Environment, counts map
 		typeWidth = max(typeWidth, len(env.Type))
 	}
 
-	fmt.Fprintf(r.out, "  %-*s  %-*s  %s\n", nameWidth, "Name", typeWidth, "Type", "Values")
-	fmt.Fprintf(r.out, "  %-*s  %-*s  %s\n", nameWidth, strings.Repeat("-", nameWidth), typeWidth, strings.Repeat("-", typeWidth), "------")
+	fmt.Fprintln(r.out, warn(fmt.Sprintf("  %-*s  %-*s  %s", nameWidth, "Name", typeWidth, "Type", "Values")))
+	fmt.Fprintln(r.out, muted(fmt.Sprintf("  %-*s  %-*s  %s", nameWidth, strings.Repeat("-", nameWidth), typeWidth, strings.Repeat("-", typeWidth), "------")))
 	for _, env := range envs {
-		fmt.Fprintf(r.out, "  %-*s  %-*s  %d\n", nameWidth, env.Name, typeWidth, env.Type, counts[env.Name])
+		fmt.Fprintf(r.out, "  %s  %-*s  %s\n",
+			coloredCell(env.Name, nameWidth, success),
+			typeWidth,
+			env.Type,
+			success(fmt.Sprintf("%d", counts[env.Name])),
+		)
 	}
 }
 
 func printStatusDeviceRows(r *Runner, repo store.Repository, devices []domain.DeviceRecord) {
 	if len(devices) == 0 {
-		fmt.Fprintln(r.out, "  none")
+		fmt.Fprintln(r.out, "  "+muted("none"))
 		return
 	}
 
@@ -317,23 +330,21 @@ func printStatusDeviceRows(r *Runner, repo store.Repository, devices []domain.De
 		statusWidth = max(statusWidth, len(deviceStatusDisplay(device.Status)))
 	}
 
-	fmt.Fprintf(r.out, "  %-*s  %-*s  %-*s  %-7s  %s\n", nameWidth, "Name", platformWidth, "Platform", statusWidth, "Status", "Current", "ID")
-	fmt.Fprintf(r.out, "  %-*s  %-*s  %-*s  %-7s  %s\n", nameWidth, strings.Repeat("-", nameWidth), platformWidth, strings.Repeat("-", platformWidth), statusWidth, strings.Repeat("-", statusWidth), "-------", "--")
+	fmt.Fprintln(r.out, warn(fmt.Sprintf("  %-*s  %-*s  %-*s  %-7s  %s", nameWidth, "Name", platformWidth, "Platform", statusWidth, "Status", "Current", "ID")))
+	fmt.Fprintln(r.out, muted(fmt.Sprintf("  %-*s  %-*s  %-*s  %-7s  %s", nameWidth, strings.Repeat("-", nameWidth), platformWidth, strings.Repeat("-", platformWidth), statusWidth, strings.Repeat("-", statusWidth), "-------", "--")))
 	for _, device := range devices {
 		current := ""
 		if device.ID == repo.DeviceID() {
 			current = "yes"
 		}
 		status := deviceStatusDisplay(device.Status)
-		fmt.Fprintf(r.out, "  %-*s  %-*s  %-*s  %-7s  %s\n",
-			nameWidth,
-			statusDeviceName(device),
+		fmt.Fprintf(r.out, "  %s  %-*s  %s  %s  %s\n",
+			coloredCell(statusDeviceName(device), nameWidth, success),
 			platformWidth,
 			statusDevicePlatform(device),
-			statusWidth,
-			status,
-			current,
-			statusShortID(device.ID),
+			coloredCell(status, statusWidth, deviceStatusColor),
+			coloredCell(current, 7, currentColor),
+			muted(statusShortID(device.ID)),
 		)
 	}
 }
@@ -382,64 +393,6 @@ func statusShortID(id string) string {
 		return id[:18] + "..."
 	}
 	return id
-}
-
-func (r *Runner) runProject(args []string) error {
-	if len(args) == 0 {
-		args = []string{"configure"}
-	}
-	switch args[0] {
-	case "configure":
-		return r.runProjectConfigure(args[1:])
-	default:
-		return fmt.Errorf("unknown project command %q", args[0])
-	}
-}
-
-func (r *Runner) runProjectConfigure(args []string) error {
-	fs := newFlagSet("project configure", r.errOut)
-	name := fs.String("name", "", "Project name")
-	language := fs.String("language", "", "Project language hint")
-	framework := fs.String("framework", "", "Project framework hint")
-	packageManager := fs.String("package-manager", "", "Project package manager hint")
-	deployTarget := fs.String("deploy-target", "", "Project deployment target hint")
-	activityMode := fs.String("activity-mode", "", "Signed activity mode: off, minimal, or full")
-	jsonOut := fs.Bool("json", false, "Print configure result as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
-		return err
-	}
-
-	repo, err := r.openRepo()
-	if err != nil {
-		return err
-	}
-	if *name != "" {
-		repo.Manifest.Name = *name
-	}
-	if *language != "" {
-		repo.Manifest.Language = *language
-	}
-	if *framework != "" {
-		repo.Manifest.Framework = *framework
-	}
-	if *packageManager != "" {
-		repo.Manifest.PackageManager = *packageManager
-	}
-	if *deployTarget != "" {
-		repo.Manifest.DeployTarget = *deployTarget
-	}
-	if *activityMode != "" {
-		repo.Manifest.ActivityMode = *activityMode
-	}
-	if err := repo.SaveManifest(); err != nil {
-		return err
-	}
-
-	if *jsonOut {
-		return printJSON(r.out, repo.Manifest)
-	}
-	fmt.Fprintln(r.out, success("Project settings saved."))
-	return nil
 }
 
 func defaultDeviceName() string {

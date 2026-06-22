@@ -58,6 +58,7 @@ func stripAppColorCodes(value string) string {
 		"\x1b[31m", "",
 		"\x1b[32m", "",
 		"\x1b[33m", "",
+		"\x1b[2m", "",
 		"\x1b[0m", "",
 	)
 	return replacer.Replace(value)
@@ -156,6 +157,21 @@ func TestRunDeviceGrantsAndRevoke(t *testing.T) {
 	}
 }
 
+func TestRunAccessRemoveIsUnknown(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "remove"}, strings.NewReader(""), &output, &output)
+
+	err := runner.Run()
+	if err == nil {
+		t.Fatal("expected access remove to be unknown")
+	}
+	if !strings.Contains(err.Error(), `unknown access command "remove"`) {
+		t.Fatalf("expected access remove to be unknown, got %v", err)
+	}
+}
+
 func TestRunAccessAlias(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
@@ -211,24 +227,21 @@ func TestRunAccessStatusPrintsDetailTable(t *testing.T) {
 	}
 }
 
-func TestRunAccessMyStatusPrintsDetailTable(t *testing.T) {
+func TestRunAccessMyStatusIsUnknown(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
 	var output bytes.Buffer
 	runner := NewRunner([]string{"ghostable", "access", "my", "status"}, strings.NewReader(""), &output, &output)
-	if err := runner.Run(); err != nil {
-		t.Fatal(err)
+	err := runner.Run()
+	if err == nil {
+		t.Fatal("expected access my status to be unknown")
 	}
-
-	text := output.String()
-	for _, expected := range []string{"Field", "Value", "Device", "Device ID", "Platform", "Status", "Project", "Local key", "test-device", "Environment", "Role", "Permissions", "default", "owner", "read, write, grant, own"} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("expected access my status output to contain %q:\n%s", expected, text)
-		}
+	if !strings.Contains(err.Error(), `unknown access command "my"`) {
+		t.Fatalf("expected access my status to be unknown, got %v", err)
 	}
 }
 
-func TestAccessHelpShowsMyStatusCommand(t *testing.T) {
+func TestAccessHelpShowsStatusCommand(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
 	var output bytes.Buffer
@@ -238,8 +251,14 @@ func TestAccessHelpShowsMyStatusCommand(t *testing.T) {
 	}
 
 	text := output.String()
-	if !strings.Contains(text, "my status") || !strings.Contains(text, "Show this device's access status") {
-		t.Fatalf("expected access help to describe my status command:\n%s", text)
+	if !strings.Contains(text, "status") || !strings.Contains(text, "Show this device's access status") {
+		t.Fatalf("expected access help to describe status command:\n%s", text)
+	}
+	if !strings.Contains(text, "approvers") || !strings.Contains(text, "Show devices that can grant access") {
+		t.Fatalf("expected access help to describe approvers command:\n%s", text)
+	}
+	if strings.Contains(text, "my status") {
+		t.Fatalf("did not expect access help to describe my status command:\n%s", text)
 	}
 }
 
@@ -298,6 +317,44 @@ func TestRunAccessGrantsPrintsGrantTable(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected colorized access grants output to contain %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestRunAccessApproversPrintsGrantCapableDevices(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "approvers"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{"Environment", "Role", "Device", "default", "owner", "test-device"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected access approvers output to contain %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestRunAccessApproversWorksWithoutLocalIdentity(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "missing-keys"))
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "approvers", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload struct {
+		Approvers []store.DeviceGrant `json:"approvers"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
+		t.Fatalf("parse approvers JSON: %v\n%s", err, output.String())
+	}
+	if !hasGrant(payload.Approvers, "", "default", "owner") {
+		t.Fatalf("expected default owner approver, got %#v", payload.Approvers)
 	}
 }
 
@@ -616,9 +673,37 @@ func TestRunAccessJoinCreatesDeviceWhenLocalIdentityIsMissing(t *testing.T) {
 	}
 }
 
+func TestRunAccessJoinPrintsNextSteps(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "second-keys"))
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "join", "--name", "second-device"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{
+		"Next steps:",
+		"Commit the public device record:",
+		".ghostable/devices/",
+		"Commit the new device.joined event under .ghostable/events/.",
+		"ghostable access requests create --env <env> --role reader",
+		"ghostable access share --device-id",
+		"Devices that can grant access:",
+		"test-device",
+		"owner",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected access join output to contain %q:\n%s", expected, text)
+		}
+	}
+}
+
 func hasGrant(grants []store.DeviceGrant, deviceID string, env string, role string) bool {
 	for _, grant := range grants {
-		if grant.DeviceID == deviceID && grant.Environment == env && grant.Role == role {
+		if (deviceID == "" || grant.DeviceID == deviceID) && grant.Environment == env && grant.Role == role {
 			return true
 		}
 	}

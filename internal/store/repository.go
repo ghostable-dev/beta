@@ -663,6 +663,78 @@ func (r Repository) DeviceGrants(env string) ([]DeviceGrant, error) {
 	return grants, nil
 }
 
+func (r Repository) AccessApprovers(env string) ([]DeviceGrant, error) {
+	if env != "" && env != "all" {
+		if err := r.requireEnvironment(env); err != nil {
+			return nil, err
+		}
+	}
+
+	policy, err := r.readPolicyFile()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.verifyPolicySignature(policy); err != nil {
+		return nil, err
+	}
+	if policy.Version < 1 {
+		return nil, fmt.Errorf("policy version is required")
+	}
+	devices, err := r.Devices()
+	if err != nil {
+		return nil, err
+	}
+	devicesByID := map[string]domain.DeviceRecord{}
+	for _, device := range devices {
+		devicesByID[device.ID] = device
+	}
+
+	approvers := []DeviceGrant{}
+	seen := map[string]bool{}
+	for _, envName := range r.grantEnvironmentNames(env) {
+		addApprover := func(deviceID string, role string) {
+			if policyDeviceRevoked(policy, deviceID) {
+				return
+			}
+			key := envName + "\x00" + deviceID
+			if seen[key] {
+				return
+			}
+			seen[key] = true
+			device := devicesByID[deviceID]
+			approvers = append(approvers, DeviceGrant{
+				DeviceID:    deviceID,
+				DeviceName:  deviceGrantName(device, deviceID),
+				Platform:    device.Platform,
+				Status:      device.Status,
+				Environment: envName,
+				Role:        role,
+				Current:     deviceID == r.DeviceID(),
+			})
+		}
+		for _, deviceID := range policy.Owners {
+			addApprover(deviceID, "owner")
+		}
+		for _, deviceID := range policy.Environments[envName].Grantors {
+			addApprover(deviceID, "grantor")
+		}
+	}
+
+	sort.Slice(approvers, func(i, j int) bool {
+		if approvers[i].Environment != approvers[j].Environment {
+			return approvers[i].Environment < approvers[j].Environment
+		}
+		if approvers[i].Role != approvers[j].Role {
+			return roleRank(approvers[i].Role) < roleRank(approvers[j].Role)
+		}
+		if approvers[i].DeviceName != approvers[j].DeviceName {
+			return approvers[i].DeviceName < approvers[j].DeviceName
+		}
+		return approvers[i].DeviceID < approvers[j].DeviceID
+	})
+	return approvers, nil
+}
+
 func (r Repository) RevokeDevice(deviceID string, env string) (DeviceRevokeResult, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {

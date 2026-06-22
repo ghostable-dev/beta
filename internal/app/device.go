@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sort"
@@ -13,7 +14,8 @@ import (
 )
 
 var deviceCommandOptions = []commandOption{
-	{Label: "my status", Value: "status", Description: "Show this device's access status"},
+	{Label: "status", Description: "Show this device's access status"},
+	{Label: "approvers", Description: "Show devices that can grant access"},
 	{Label: "requests", Description: "Create or review access requests"},
 	{Label: "list", Description: "List project devices"},
 	{Label: "create", Description: "Create an access credential"},
@@ -61,15 +63,8 @@ func (r *Runner) runDevice(args []string) error {
 		return r.runDeviceList(args[1:])
 	case "status":
 		return r.runDeviceStatus(args[1:])
-	case "my":
-		if len(args) > 1 && args[1] == "status" {
-			return r.runDeviceStatus(args[2:])
-		}
-		command := args[0]
-		if len(args) > 1 {
-			command = strings.Join(args[:2], " ")
-		}
-		return fmt.Errorf("unknown %s command %q", r.deviceCommandName(), command)
+	case "approvers":
+		return r.runDeviceApprovers(args[1:])
 	case "share":
 		return r.runDeviceShare(args[1:])
 	case "grants", "access":
@@ -78,19 +73,19 @@ func (r *Runner) runDevice(args []string) error {
 		return r.runDeviceMatrix(args[1:])
 	case "revoke":
 		return r.runDeviceRevoke(args[1:])
-	case "delete", "remove":
+	case "delete":
 		return r.runDeviceDelete(args[1:])
 	case "requests":
 		return r.runDeviceRequests(args[1:])
 	case "leave":
 		return fmt.Errorf("%s %s is not implemented in the Go client yet", r.deviceCommandName(), args[0])
 	default:
-		return fmt.Errorf("unknown device command %q", args[0])
+		return fmt.Errorf("unknown %s command %q", r.deviceCommandName(), args[0])
 	}
 }
 
 func (r *Runner) printDeviceHelp() {
-	fmt.Fprintf(r.out, "Usage: ghostable %s <my status|requests|list|create|join|share|revoke|delete> [options]\n", r.deviceCommandName())
+	fmt.Fprintf(r.out, "Usage: ghostable %s <status|approvers|requests|list|create|join|share|revoke|delete> [options]\n", r.deviceCommandName())
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Commands:"))
 	printCommandDescriptions(r.out, deviceCommandOptions)
@@ -162,6 +157,7 @@ func (r *Runner) runDeviceJoin(args []string) error {
 		{Label: "Status", Value: deviceStatusDisplay(device.Status)},
 		{Label: "Local key", Value: repo.KeyPath()},
 	})
+	r.printJoinNextSteps(repo, device)
 	return nil
 }
 
@@ -171,6 +167,32 @@ func isMissingLocalIdentityError(err error) bool {
 	}
 	text := err.Error()
 	return strings.Contains(text, "no local Ghostable identity") || strings.Contains(text, "has no local Ghostable identity")
+}
+
+func (r *Runner) printJoinNextSteps(repo store.Repository, device domain.DeviceRecord) {
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, warn("Next steps:"))
+	fmt.Fprintf(r.out, "  Commit the public device record: %s\n", deviceRecordRelativePath(device.ID))
+	fmt.Fprintln(r.out, "  Commit the new device.joined event under .ghostable/events/.")
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, "  To request access:")
+	fmt.Fprintln(r.out, "    ghostable access requests create --env <env> --role reader")
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, "  Or ask an owner/grantor to run:")
+	fmt.Fprintf(r.out, "    ghostable access share --device-id %s --env <env> --role reader\n", device.ID)
+
+	approvers, err := accessApprovers(repo, "")
+	if err != nil || len(approvers) == 0 {
+		return
+	}
+
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, warn("Devices that can grant access:"))
+	printAccessApproverRows(r, approvers, false)
+}
+
+func deviceRecordRelativePath(deviceID string) string {
+	return ".ghostable/devices/" + base64.RawURLEncoding.EncodeToString([]byte(deviceID)) + ".json"
 }
 
 func (r *Runner) runDeviceList(args []string) error {
@@ -236,6 +258,39 @@ func (r *Runner) runDeviceStatus(args []string) error {
 	fmt.Fprintln(r.out)
 	printCurrentAccessRows(r.out, environmentRoles)
 	return nil
+}
+
+func (r *Runner) runDeviceApprovers(args []string) error {
+	fs := newFlagSet(r.deviceCommandName()+" approvers", r.errOut)
+	env := fs.String("env", "", "Environment name or all")
+	full := fs.Bool("full", false, "Show full device IDs")
+	jsonOut := fs.Bool("json", false, "Print approvers as JSON")
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("full", "json")); err != nil {
+		return err
+	}
+	repo, err := r.openRepo()
+	if err != nil {
+		if !isMissingLocalIdentityError(err) {
+			return err
+		}
+		repo, err = store.OpenProject(".")
+		if err != nil {
+			return err
+		}
+	}
+	approvers, err := accessApprovers(repo, *env)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(r.out, map[string]interface{}{"approvers": approvers})
+	}
+	printAccessApproverRows(r, approvers, *full)
+	return nil
+}
+
+func accessApprovers(repo store.Repository, env string) ([]store.DeviceGrant, error) {
+	return repo.AccessApprovers(env)
 }
 
 func currentDeviceAccessRoles(repo store.Repository) (map[string][]string, []string) {
@@ -907,6 +962,14 @@ func printDeviceGrantRows(r *Runner, grants []store.DeviceGrant, full bool) {
 			id,
 		)
 	}
+}
+
+func printAccessApproverRows(r *Runner, approvers []store.DeviceGrant, full bool) {
+	if len(approvers) == 0 {
+		fmt.Fprintln(r.out, warn("No devices can grant access."))
+		return
+	}
+	printDeviceGrantRows(r, approvers, full)
 }
 
 func printAccessRequestRows(out io.Writer, requests []store.AccessRequestEntry, full bool) {
