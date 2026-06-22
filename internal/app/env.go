@@ -14,7 +14,6 @@ import (
 	"github.com/ghostable-dev/beta/internal/domain"
 	"github.com/ghostable-dev/beta/internal/dotenv"
 	"github.com/ghostable-dev/beta/internal/store"
-	"github.com/ghostable-dev/beta/internal/validation"
 )
 
 var envCommandOptions = []commandOption{
@@ -24,13 +23,9 @@ var envCommandOptions = []commandOption{
 	{Label: "sync", Description: "Push and remove missing keys"},
 	{Label: "pull", Description: "Write stored values to an env file"},
 	{Label: "diff", Description: "Compare an env file or environment"},
-	{Label: "validate", Description: "Check values against schema rules"},
 	{Label: "history", Description: "Show signed change history"},
-	{Label: "duplicate", Description: "Create an environment from another"},
 	{Label: "rename", Description: "Rename an environment"},
 	{Label: "delete", Description: "Remove an environment"},
-	{Label: "layout", Description: "Manage environment key order"},
-	{Label: "file", Description: "Save env file content"},
 }
 
 var envLayoutCommandOptions = []commandOption{
@@ -39,6 +34,11 @@ var envLayoutCommandOptions = []commandOption{
 
 var envFileCommandOptions = []commandOption{
 	{Label: "save", Description: "Write env file content to disk"},
+}
+
+var envDiffModeOptions = []commandOption{
+	{Label: "two environments", Value: "environment", Description: "Compare stored values between environments"},
+	{Label: "env file", Value: "file", Description: "Compare a local env file to stored values"},
 }
 
 var seedModeOptions = []commandOption{
@@ -107,8 +107,6 @@ func (r *Runner) runEnv(args []string) error {
 		return r.runEnvPull(args[1:])
 	case "diff":
 		return r.runEnvDiff(args[1:])
-	case "validate":
-		return r.runEnvValidate(args[1:])
 	case "history":
 		return r.runEnvHistory(args[1:])
 	case "duplicate":
@@ -521,7 +519,12 @@ func (r *Runner) runEnvDiff(args []string) error {
 	if environmentDiffRequested && (envProvided || fileProvided) {
 		return fmt.Errorf("pass either --from/--to for environment diff or --env/--file for file diff, not both")
 	}
-	if shouldPromptEnvironmentDiff(r.interactive, repo, environmentDiffRequested, envProvided, fileProvided) {
+	fileDiffRequested := envProvided || fileProvided
+	diffMode, err := r.selectEnvDiffMode(repo, environmentDiffRequested, fileDiffRequested)
+	if err != nil {
+		return err
+	}
+	if diffMode == "environment" {
 		source, err := r.selectEnvironmentWithLabel(repo, *from, "Select source environment", "from")
 		if err != nil {
 			return err
@@ -562,59 +565,14 @@ func (r *Runner) runEnvDiff(args []string) error {
 	return nil
 }
 
-func shouldPromptEnvironmentDiff(interactive bool, repo store.Repository, environmentDiffRequested bool, envProvided bool, fileProvided bool) bool {
+func (r *Runner) selectEnvDiffMode(repo store.Repository, environmentDiffRequested bool, fileDiffRequested bool) (string, error) {
 	if environmentDiffRequested {
-		return true
+		return "environment", nil
 	}
-	return interactive && !envProvided && !fileProvided && len(repo.Environments()) > 1
-}
-
-func (r *Runner) runEnvValidate(args []string) error {
-	fs := newFlagSet("env validate", r.errOut)
-	env := fs.String("env", "", "Environment name")
-	file := fs.String("file", "", "Path to .env file")
-	jsonOut := fs.Bool("json", false, "Print validation result as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
-		return err
+	if fileDiffRequested || !r.interactive || len(repo.Environments()) < 2 {
+		return "file", nil
 	}
-	repo, err := r.openRepo()
-	if err != nil {
-		return err
-	}
-	selected, err := r.selectEnvironment(repo, *env)
-	if err != nil {
-		return err
-	}
-	values := map[string]string{}
-	if *file != "" {
-		values, err = readDotenvFile(repoFilePath(repo.Root, *file))
-	} else {
-		variables, err := repo.ReadVariables(selected)
-		if err != nil {
-			return err
-		}
-		for key, variable := range variables {
-			values[key] = variable.Value
-		}
-	}
-	if err != nil {
-		return err
-	}
-	result, err := validation.Validate(repo.Root, repo, selected, values, *file)
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(r.out, result)
-	}
-	if result.Passed {
-		fmt.Fprintln(r.out, success("Validation passed."))
-		return nil
-	}
-	for _, failure := range result.Errors {
-		fmt.Fprintf(r.out, "%s: %s (%s)\n", danger(failure.Key), failure.Message, failure.Rule)
-	}
-	return fmt.Errorf("validation failed")
+	return r.prompts.SelectOptions("Compare", promptOptions(envDiffModeOptions), 0)
 }
 
 func (r *Runner) runEnvHistory(args []string) error {

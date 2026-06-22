@@ -55,8 +55,11 @@ func TestRootHelpIncludesSchemaCommand(t *testing.T) {
 	text := output.String()
 	for _, expected := range []string{
 		"ghostable schema <command> [options]",
+		"ghostable validate [options]",
 		"schema",
 		"Manage validation schema files and rules",
+		"validate",
+		"Check values against schema rules",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected root help to contain %q:\n%s", expected, text)

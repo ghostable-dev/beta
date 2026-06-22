@@ -94,6 +94,8 @@ func (r *Runner) Run() error {
 		return r.runEnv(args[2:])
 	case "var", "variable":
 		return r.runVar(args[2:])
+	case "validate":
+		return r.runValidate(args[2:])
 	case "review":
 		return r.runReview(args[2:])
 	case "scan":
@@ -150,6 +152,7 @@ var rootCommandOptions = []commandOption{
 	{Label: "status", Description: "Show local project status"},
 	{Label: "env", Description: "Manage environments and encrypted values"},
 	{Label: "var", Description: "Manage individual variables"},
+	{Label: "validate", Description: "Check values against schema rules"},
 	{Label: "schema", Description: "Manage validation schema files and rules"},
 	{Label: "review", Description: "Review code changes against encrypted ENV state"},
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
@@ -232,6 +235,7 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable status [--json]")
 	fmt.Fprintln(r.out, "  ghostable env <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable var <command> [options]")
+	fmt.Fprintln(r.out, "  ghostable validate [options]")
 	fmt.Fprintln(r.out, "  ghostable schema <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable review --base <ref> [options]")
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")

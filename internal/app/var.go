@@ -15,15 +15,15 @@ import (
 var variableCommandOptions = []commandOption{
 	{Label: "push", Description: "Save one variable"},
 	{Label: "pull", Description: "Read or write one variable"},
-	{Label: "copy", Description: "Promote a variable between environments"},
+	{Label: "promote", Description: "Promote a variable between environments"},
 	{Label: "delete", Description: "Remove one variable"},
 	{Label: "history", Description: "Show change history"},
 	{Label: "context", Description: "View or update the encrypted note"},
 	{Label: "vapor-secret", Description: "Mark a variable for Vapor Secrets"},
 }
 
-var variableCopyModeOptions = []commandOption{
-	{Label: "value", Description: "Copy the value and variable flags"},
+var variablePromotionModeOptions = []commandOption{
+	{Label: "value", Description: "Promote the value and variable flags"},
 	{Label: "key only", Value: "key-only", Description: "Add the key to target layout without copying its value"},
 }
 
@@ -49,8 +49,8 @@ func (r *Runner) runVar(args []string) error {
 		return r.runVarPush(args[1:])
 	case "pull":
 		return r.runVarPull(args[1:])
-	case "copy":
-		return r.runVarCopy(args[1:])
+	case "promote", "copy":
+		return r.runVarPromote(args[1:])
 	case "delete":
 		return r.runVarDelete(args[1:])
 	case "history":
@@ -280,19 +280,19 @@ func (r *Runner) runVarPull(args []string) error {
 	return nil
 }
 
-func (r *Runner) runVarCopy(args []string) error {
-	fs := newFlagSet("var copy", r.errOut)
+func (r *Runner) runVarPromote(args []string) error {
+	fs := newFlagSet("var promote", r.errOut)
 	from := fs.String("from", "", "Source environment name")
 	to := fs.String("to", "", "Target environment name")
 	key := fs.String("key", "", "Variable name")
-	mode := fs.String("mode", "value", "Copy mode: value or key-only")
+	mode := fs.String("mode", "value", "Promotion mode: value or key-only")
 	reason := fs.String("reason", "", "Reason stored in signed local events")
-	jsonOut := fs.Bool("json", false, "Print copy result as JSON")
+	jsonOut := fs.Bool("json", false, "Print promotion result as JSON")
 	modeProvided := hasFlag(args, "mode")
 	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
 		return err
 	}
-	copyMode, err := normalizeVariableCopyMode(*mode)
+	promotionMode, err := normalizeVariablePromotionMode(*mode)
 	if err != nil {
 		return err
 	}
@@ -320,17 +320,17 @@ func (r *Runner) runVarCopy(args []string) error {
 		return fmt.Errorf("%s was not found in %s", variableKey, source)
 	}
 	if r.interactive && !modeProvided {
-		copyMode, err = r.selectVariableCopyMode("Copy mode", copyMode)
+		promotionMode, err = r.selectVariablePromotionMode("Promotion mode", promotionMode)
 		if err != nil {
 			return err
 		}
-		r.printPromptAnswer("Copy mode", variableCopyModeLabel(copyMode))
+		r.printPromptAnswer("Promotion mode", variablePromotionModeLabel(promotionMode))
 	}
-	if copyMode == "key-only" {
+	if promotionMode == "key-only" {
 		if err := repo.AddLayoutKey(target, variableKey); err != nil {
 			return err
 		}
-		return r.printVariableCopyResult(*jsonOut, source, target, variableKey, copyMode)
+		return r.printVariablePromotionResult(*jsonOut, source, target, variableKey, promotionMode)
 	}
 
 	commented := variable.Commented
@@ -342,16 +342,16 @@ func (r *Runner) runVarCopy(args []string) error {
 	}); err != nil {
 		return err
 	}
-	return r.printVariableCopyResult(*jsonOut, source, target, variableKey, copyMode)
+	return r.printVariablePromotionResult(*jsonOut, source, target, variableKey, promotionMode)
 }
 
-func (r *Runner) printVariableCopyResult(jsonOut bool, source string, target string, key string, mode string) error {
+func (r *Runner) printVariablePromotionResult(jsonOut bool, source string, target string, key string, mode string) error {
 	payload := map[string]interface{}{
 		"source":      source,
 		"environment": target,
 		"key":         key,
 		"mode":        mode,
-		"copied":      true,
+		"promoted":    true,
 	}
 	if jsonOut {
 		return printJSON(r.out, payload)
@@ -360,11 +360,11 @@ func (r *Runner) printVariableCopyResult(jsonOut bool, source string, target str
 		fmt.Fprintln(r.out, success(fmt.Sprintf("Added %s to %s layout from %s.", key, target, source)))
 		return nil
 	}
-	fmt.Fprintln(r.out, success(fmt.Sprintf("Copied %s from %s to %s.", key, source, target)))
+	fmt.Fprintln(r.out, success(fmt.Sprintf("Promoted %s from %s to %s.", key, source, target)))
 	return nil
 }
 
-func normalizeVariableCopyMode(value string) (string, error) {
+func normalizeVariablePromotionMode(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
 	case "", "value", "values":
@@ -372,26 +372,26 @@ func normalizeVariableCopyMode(value string) (string, error) {
 	case "key-only", "key only", "keys-only", "keys only", "layout", "none":
 		return "key-only", nil
 	default:
-		return "", fmt.Errorf("invalid variable copy mode %q; use value or key-only", value)
+		return "", fmt.Errorf("invalid variable promotion mode %q; use value or key-only", value)
 	}
 }
 
-func (r *Runner) selectVariableCopyMode(label string, fallback string) (string, error) {
-	fallback, err := normalizeVariableCopyMode(fallback)
+func (r *Runner) selectVariablePromotionMode(label string, fallback string) (string, error) {
+	fallback, err := normalizeVariablePromotionMode(fallback)
 	if err != nil {
 		return "", err
 	}
 	defaultIndex := 0
-	for index, option := range variableCopyModeOptions {
+	for index, option := range variablePromotionModeOptions {
 		if option.Value == fallback || option.Label == fallback {
 			defaultIndex = index
 			break
 		}
 	}
-	return r.prompts.SelectOptions(label, promptOptions(variableCopyModeOptions), defaultIndex)
+	return r.prompts.SelectOptions(label, promptOptions(variablePromotionModeOptions), defaultIndex)
 }
 
-func variableCopyModeLabel(value string) string {
+func variablePromotionModeLabel(value string) string {
 	if value == "key-only" {
 		return "key only"
 	}

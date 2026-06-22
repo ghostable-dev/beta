@@ -44,6 +44,23 @@ func TestRunVarPullSelectsExistingVariable(t *testing.T) {
 	}
 }
 
+func TestVarHelpShowsPromoteAndHidesCopy(t *testing.T) {
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "--help"}, strings.NewReader(""), &output, &output)
+
+	if err := runner.runVar(runner.args[2:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, "promote") {
+		t.Fatalf("expected var help to show promote:\n%s", text)
+	}
+	if strings.Contains(text, "copy") {
+		t.Fatalf("did not expect var help to show copy:\n%s", text)
+	}
+}
+
 func TestRunVarPushSelectsVariableFromFile(t *testing.T) {
 	root := setupRepoForVarCommandTest(t)
 	envFile := filepath.Join(root, ".env.seed")
@@ -201,7 +218,7 @@ func TestRunVarVaporSecretTogglesMetadata(t *testing.T) {
 	}
 }
 
-func TestRunVarCopyCopiesValueAndMetadata(t *testing.T) {
+func TestRunVarPromoteCopiesValueAndMetadata(t *testing.T) {
 	root := setupRepoForVarCommandTest(t)
 	repo, err := store.Open(root)
 	if err != nil {
@@ -221,8 +238,8 @@ func TestRunVarCopyCopiesValueAndMetadata(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "var", "copy", "--from", "default", "--to", "staging", "--key", "APP_KEY", "--json"}, strings.NewReader(""), &output, &output)
-	if err := runner.runVarCopy(runner.args[3:]); err != nil {
+	runner := NewRunner([]string{"ghostable", "var", "promote", "--from", "default", "--to", "staging", "--key", "APP_KEY", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarPromote(runner.args[3:]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +253,7 @@ func TestRunVarCopyCopiesValueAndMetadata(t *testing.T) {
 	for _, expected := range []string{
 		`"key": "APP_KEY"`,
 		`"mode": "value"`,
-		`"copied": true`,
+		`"promoted": true`,
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("expected JSON output to contain %q, got:\n%s", expected, output.String())
@@ -244,7 +261,38 @@ func TestRunVarCopyCopiesValueAndMetadata(t *testing.T) {
 	}
 }
 
-func TestRunVarCopyPromptsForKeyOnlyPromotion(t *testing.T) {
+func TestRunVarPromoteKeepsCopyAlias(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("staging", "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "APP_KEY", "secret", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "copy", "--from", "default", "--to", "staging", "--key", "APP_KEY"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVar(runner.args[2:]); err != nil {
+		t.Fatal(err)
+	}
+
+	variable, exists, err := repo.GetVariable("staging", "APP_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || variable.Value != "secret" {
+		t.Fatalf("expected hidden copy alias to promote value, got exists=%v variable=%#v", exists, variable)
+	}
+	if !strings.Contains(output.String(), success("Promoted APP_KEY from default to staging.")) {
+		t.Fatalf("expected promotion output, got:\n%s", output.String())
+	}
+}
+
+func TestRunVarPromotePromptsForKeyOnlyPromotion(t *testing.T) {
 	root := setupRepoForVarCommandTest(t)
 	repo, err := store.Open(root)
 	if err != nil {
@@ -262,11 +310,11 @@ func TestRunVarCopyPromptsForKeyOnlyPromotion(t *testing.T) {
 
 	input := &oneByteReader{reader: strings.NewReader("1\n2\n1\n2\n")}
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "var", "copy"}, input, &output, &output)
+	runner := NewRunner([]string{"ghostable", "var", "promote"}, input, &output, &output)
 	runner.interactive = true
 	runner.prompts = prompt.New(input, &output)
 
-	if err := runner.runVarCopy(runner.args[3:]); err != nil {
+	if err := runner.runVarPromote(runner.args[3:]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,12 +323,12 @@ func TestRunVarCopyPromptsForKeyOnlyPromotion(t *testing.T) {
 		"Select source environment",
 		"Select target environment",
 		"Select a variable",
-		"Copy mode",
-		promptAnswerText("Copy mode", "key only"),
+		"Promotion mode",
+		promptAnswerText("Promotion mode", "key only"),
 		success("Added ALPHA to staging layout from default."),
 	} {
 		if !strings.Contains(text, expected) {
-			t.Fatalf("expected var copy output to contain %q:\n%s", expected, text)
+			t.Fatalf("expected var promote output to contain %q:\n%s", expected, text)
 		}
 	}
 	values, err := repo.ReadVariables("staging")
@@ -288,7 +336,7 @@ func TestRunVarCopyPromptsForKeyOnlyPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(values) != 0 {
-		t.Fatalf("did not expect key-only copy to write values, got %#v", values)
+		t.Fatalf("did not expect key-only promotion to write values, got %#v", values)
 	}
 	var layout domain.Layout
 	content, err := os.ReadFile(filepath.Join(root, ".ghostable", "environments", "staging", "layout.json"))
