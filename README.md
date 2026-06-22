@@ -67,6 +67,7 @@ ghostable env push --env default --file .env --reason "Initial default baseline"
 ghostable env pull --env default --file .env
 ghostable env diff --env default --file .env
 ghostable env validate --env default
+ghostable review --base origin/main --env production
 ghostable deploy production
 ghostable scan
 ```
@@ -83,6 +84,7 @@ Automation and agents should pass flags and prefer `--json`.
 - `status` prints project, environment, device, and value counts.
 - `env list|create|delete|push|sync|copy|pull|diff|validate|history`
   manages environment-level workflows.
+- `review` checks whether code changes and encrypted ENV metadata agree.
 - `deploy [environment]` writes decrypted values to `.env` for deploy scripts.
 - `env duplicate|rename|layout generate|file save` supports desktop and agent
   workflows.
@@ -93,6 +95,15 @@ Automation and agents should pass flags and prefer `--json`.
 - `agent init|instructions|capabilities` emits safe instructions for coding
   agents.
 - `scan` finds hard-coded secrets locally without modifying files.
+
+## Review
+
+`ghostable review` scans changed lines for common ENV access patterns in
+PHP/Laravel, JavaScript/TypeScript/Node, Go, Python, Ruby/Rails, Java, C#,
+Rust, Swift, and shell/deploy scripts. It compares those references with
+encrypted Ghostable values, schema files, `.env.example`, Vapor Secret metadata,
+and signed `.ghostable/` records. GitHub Actions workflow references under
+`.github/` are ignored because those often come from GitHub Secrets or Vars.
 
 ## Deploy Scripts
 

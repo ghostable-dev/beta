@@ -94,6 +94,8 @@ func (r *Runner) Run() error {
 		return r.runEnv(args[2:])
 	case "var", "variable":
 		return r.runVar(args[2:])
+	case "review":
+		return r.runReview(args[2:])
 	case "scan":
 		return r.runScan(args[2:])
 	case "schema":
@@ -148,6 +150,7 @@ var rootCommandOptions = []commandOption{
 	{Label: "status", Description: "Show local project status"},
 	{Label: "env", Description: "Manage environments and encrypted values"},
 	{Label: "var", Description: "Manage individual variables"},
+	{Label: "review", Description: "Review code changes against encrypted ENV state"},
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
 	{Label: "scan", Description: "Find hard-coded secrets"},
 	{Label: "agents", Value: "agent", Description: "Print agent guidance and credentials"},
@@ -182,6 +185,22 @@ func printCommandDescriptions(out io.Writer, options []commandOption) {
 	}
 }
 
+func (r *Runner) progressReporter(enabled bool) func(message string) {
+	if !enabled || !r.interactive {
+		return nil
+	}
+	return func(message string) {
+		fmt.Fprintln(r.errOut, warn(message+"..."))
+	}
+}
+
+func (r *Runner) printProgress(enabled bool, message string) {
+	report := r.progressReporter(enabled)
+	if report != nil {
+		report(message)
+	}
+}
+
 func isHelpArg(value string) bool {
 	switch value {
 	case "-h", "--help", "help":
@@ -212,6 +231,7 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable status [--json]")
 	fmt.Fprintln(r.out, "  ghostable env <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable var <command> [options]")
+	fmt.Fprintln(r.out, "  ghostable review --base <ref> [options]")
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")
 	fmt.Fprintln(r.out, "  ghostable scan [paths...] [options]")
 	fmt.Fprintln(r.out, "  ghostable agents <command> [options]")

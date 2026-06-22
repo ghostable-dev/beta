@@ -2059,6 +2059,42 @@ func (r Repository) readAccessGrant(env string, deviceID string) (domain.AccessG
 	return grant, nil
 }
 
+func (r Repository) VerifyPolicyMetadata() error {
+	policy, err := r.readPolicyFile()
+	if err != nil {
+		return err
+	}
+	if _, err := r.verifyPolicySignature(policy); err != nil {
+		return err
+	}
+	if policy.Version < 1 {
+		return fmt.Errorf("policy version is required")
+	}
+	return nil
+}
+
+func (r Repository) VerifyDeviceMetadataFile(path string) error {
+	var device domain.DeviceRecord
+	if err := readJSON(r.resolveProjectPath(path), &device); err != nil {
+		return err
+	}
+	return security.VerifyDeviceRecord(device)
+}
+
+func (r Repository) VerifyAccessGrantMetadataFile(path string) error {
+	var grant domain.AccessGrantRecord
+	if err := readJSON(r.resolveProjectPath(path), &grant); err != nil {
+		return err
+	}
+	if grant.Schema != domain.AccessGrantSchema {
+		return fmt.Errorf("access grant has invalid schema")
+	}
+	if grant.ProjectID != r.Manifest.ID {
+		return fmt.Errorf("access grant is not bound to this project")
+	}
+	return r.verifyAccessGrantMetadata(grant)
+}
+
 func (r Repository) loadEnvironmentDEK(env string) ([]byte, error) {
 	grant, err := r.readAccessGrant(env, r.DeviceID())
 	if err != nil {
@@ -2135,6 +2171,91 @@ func (r Repository) verifyValueRecord(record domain.ValueRecord) error {
 		return fmt.Errorf("value %s has an invalid device signature", record.Key)
 	}
 	return nil
+}
+
+func (r Repository) verifyValueRecordMetadata(record domain.ValueRecord) error {
+	if record.Schema != domain.ValueSchema {
+		return nil
+	}
+	if record.ProjectID != r.Manifest.ID ||
+		record.Environment != record.Secret.Env ||
+		record.Key != record.Secret.Name ||
+		record.Secret.AAD.Org != domain.GhostableOrgScope ||
+		record.Secret.AAD.Project != record.ProjectID ||
+		record.Secret.AAD.Env != record.Environment ||
+		record.Secret.AAD.Name != record.Key {
+		return fmt.Errorf("value %s is not bound to its Ghostable storage path", record.Key)
+	}
+	device, err := r.readDevice(record.UpdatedByDeviceID)
+	if err != nil {
+		return err
+	}
+	policy, err := r.readVerifiedPolicyMetadata()
+	if err != nil {
+		return err
+	}
+	if !canWrite(policy, record.Environment, record.UpdatedByDeviceID) {
+		return fmt.Errorf("value %s was signed by a device without write access", record.Key)
+	}
+	envKey, err := r.readEnvironmentKey(record.Environment)
+	if err != nil {
+		return err
+	}
+	if record.Secret.EnvKekVersion != envKey.Version || record.Secret.EnvKekFingerprint != envKey.Fingerprint {
+		return fmt.Errorf("value %s does not match current environment key", record.Key)
+	}
+	if !security.VerifySecretBody(record.Secret, device.SigningKey.PublicKey, record.Secret.ClientSig) {
+		return fmt.Errorf("value %s has an invalid device signature", record.Key)
+	}
+	return nil
+}
+
+func (r Repository) verifyAccessGrantMetadata(grant domain.AccessGrantRecord) error {
+	if grant.Environment == "" || grant.DeviceID == "" {
+		return fmt.Errorf("access grant is missing its environment or device")
+	}
+	envKey, err := r.readEnvironmentKey(grant.Environment)
+	if err != nil {
+		return err
+	}
+	if grant.EnvKeyVersion != envKey.Version || grant.EnvKeyFingerprint != envKey.Fingerprint {
+		return fmt.Errorf("access grant for %s/%s does not match current environment key", grant.Environment, grant.DeviceID)
+	}
+	signer, err := r.readDevice(grant.GrantedByDeviceID)
+	if err != nil {
+		return err
+	}
+	if !security.VerifyCanonical(grant, signer.SigningKey.PublicKey, grant.ClientSig) {
+		return fmt.Errorf("access grant signature could not be verified")
+	}
+	if !security.VerifyEnvelope(grant.Envelope, signer.SigningKey.PublicKey) {
+		return fmt.Errorf("access grant envelope signature could not be verified")
+	}
+	policy, err := r.readVerifiedPolicyMetadata()
+	if err != nil {
+		return err
+	}
+	if !canGrant(policy, grant.Environment, grant.GrantedByDeviceID) {
+		return fmt.Errorf("access grant for %s was signed by unauthorized device %s", grant.Environment, grant.GrantedByDeviceID)
+	}
+	if !canRead(policy, grant.Environment, grant.DeviceID) {
+		return fmt.Errorf("access grant target %s does not have read access to %s", grant.DeviceID, grant.Environment)
+	}
+	return nil
+}
+
+func (r Repository) readVerifiedPolicyMetadata() (domain.Policy, error) {
+	policy, err := r.readPolicyFile()
+	if err != nil {
+		return policy, err
+	}
+	if _, err := r.verifyPolicySignature(policy); err != nil {
+		return policy, err
+	}
+	if policy.Version < 1 {
+		return policy, fmt.Errorf("policy version is required")
+	}
+	return policy, nil
 }
 
 func (r Repository) writeLayout(env string, keys map[string]int) error {

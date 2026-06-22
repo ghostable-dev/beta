@@ -152,6 +152,100 @@ func TestRepositoryRejectsTamperedValueSignature(t *testing.T) {
 	}
 }
 
+func TestRepositoryReadsVariableMetadataWithoutDecrypting(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PutVariables("local", map[string]string{"APP_KEY": "super-secret-value"}, PutOptions{Reason: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	projectRepo, err := OpenProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := projectRepo.ReadVariableMetadata("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata) != 1 {
+		t.Fatalf("expected one metadata entry, got %#v", metadata)
+	}
+	if metadata[0].Key != "APP_KEY" || metadata[0].Environment != "local" {
+		t.Fatalf("unexpected metadata entry: %#v", metadata[0])
+	}
+	if !metadata[0].ValidSignature {
+		t.Fatalf("expected valid metadata signature: %#v", metadata[0])
+	}
+	if metadata[0].Version != 1 || metadata[0].UpdatedByDeviceID == "" {
+		t.Fatalf("expected version and updater metadata: %#v", metadata[0])
+	}
+}
+
+func TestRepositoryReportsTamperedVariableMetadataSignature(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PutVariables("local", map[string]string{"APP_KEY": "super-secret-value"}, PutOptions{Reason: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	valueFiles, err := filepath.Glob(filepath.Join(root, ".ghostable", "environments", "local", "values", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(valueFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record domain.ValueRecord
+	if err := json.Unmarshal(content, &record); err != nil {
+		t.Fatal(err)
+	}
+	record.Secret.Name = "OTHER_KEY"
+	tampered, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(valueFiles[0], append(tampered, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	projectRepo, err := OpenProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := projectRepo.ReadVariableMetadata("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metadata) != 1 {
+		t.Fatalf("expected one metadata entry, got %#v", metadata)
+	}
+	if metadata[0].ValidSignature {
+		t.Fatalf("expected metadata signature to be invalid: %#v", metadata[0])
+	}
+	if !strings.Contains(metadata[0].SignatureError, "not bound") {
+		t.Fatalf("expected binding error, got %#v", metadata[0])
+	}
+}
+
 func TestRepositoryRejectsUnsignedPolicy(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))

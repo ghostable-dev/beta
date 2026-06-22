@@ -153,6 +153,53 @@ func (r Repository) ReadVariables(env string) (map[string]domain.Variable, error
 	return variables, nil
 }
 
+type VariableMetadata struct {
+	Environment       string `json:"environment"`
+	Key               string `json:"key"`
+	Version           int    `json:"version"`
+	UpdatedAt         string `json:"updatedAt,omitempty"`
+	UpdatedByDeviceID string `json:"updatedByDeviceId,omitempty"`
+	VaporSecret       bool   `json:"vaporSecret,omitempty"`
+	Commented         bool   `json:"commented,omitempty"`
+	ValidSignature    bool   `json:"validSignature"`
+	SignatureError    string `json:"signatureError,omitempty"`
+}
+
+func (r Repository) ReadVariableMetadata(env string) ([]VariableMetadata, error) {
+	if err := r.requireEnvironment(env); err != nil {
+		return nil, err
+	}
+
+	records, err := r.readEnvironmentValueRecords(env)
+	if err != nil {
+		return nil, err
+	}
+
+	variables := make([]VariableMetadata, 0, len(records))
+	for _, record := range records {
+		signatureErr := r.verifyValueRecordMetadata(record)
+		metadata := VariableMetadata{
+			Environment:       record.Environment,
+			Key:               record.Key,
+			Version:           record.Version,
+			UpdatedAt:         record.UpdatedAt,
+			UpdatedByDeviceID: record.UpdatedByDeviceID,
+			VaporSecret:       record.Secret.IsVaporSecret != nil && *record.Secret.IsVaporSecret,
+			Commented:         record.Secret.IsCommented,
+			ValidSignature:    signatureErr == nil,
+		}
+		if signatureErr != nil {
+			metadata.SignatureError = signatureErr.Error()
+		}
+		variables = append(variables, metadata)
+	}
+
+	sort.Slice(variables, func(i, j int) bool {
+		return variables[i].Key < variables[j].Key
+	})
+	return variables, nil
+}
+
 func (r Repository) readEnvironmentValueRecords(env string) ([]domain.ValueRecord, error) {
 	valuesDir := r.valuesDir(env)
 	entries, err := os.ReadDir(valuesDir)

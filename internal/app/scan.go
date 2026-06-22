@@ -52,6 +52,7 @@ func (r *Runner) runScan(args []string) error {
 	allIgnores = append(allIgnores, manifestIgnores...)
 	allIgnores = append(allIgnores, ignores...)
 
+	r.printProgress(!*jsonOut, "Scanning project files")
 	result, err := scanner.Scan(scanner.Options{
 		Root:      root,
 		Paths:     positionals,
