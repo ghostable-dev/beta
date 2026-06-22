@@ -15,8 +15,15 @@ const agentsBlockEnd = "<!-- ghostable:end -->"
 
 var agentCommandOptions = []commandOption{
 	{Label: "instructions", Description: "Print agent guidance"},
-	{Label: "capabilities", Description: "List machine-readable capabilities"},
+	{Label: "capabilities", Description: "List recommended safe agent commands"},
 	{Label: "init", Description: "Write AGENTS.md guidance"},
+}
+
+type agentCapabilitiesPayload struct {
+	Schema      string   `json:"schema"`
+	Description string   `json:"description"`
+	Commands    []string `json:"commands"`
+	Safety      []string `json:"safety"`
 }
 
 func (r *Runner) runAgent(args []string) error {
@@ -62,34 +69,48 @@ func (r *Runner) runAgentCapabilities(args []string) error {
 	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
 		return err
 	}
-	capabilities := map[string]interface{}{
-		"schema": "ghostable.agent-capabilities.v1",
-		"commands": []string{
+
+	capabilities := agentCapabilitiesPayload{
+		Schema:      "ghostable.agent-capabilities.v1",
+		Description: "Recommended agent-safe commands only; this is not the full Ghostable CLI command inventory.",
+		Commands: []string{
 			"status --json",
 			"env list --json",
-			"env diff --json",
-			"validate --json",
-			"env push --json --reason",
-			"env pull --json",
-			"deploy <env> --json",
+			"env diff --from <source-env> --to <target-env> --json",
+			"env diff --env <env> --file <path> --json",
+			"env pull --env <env> --file <path> --dry-run --json",
+			"env history --env <env> --json",
+			"validate --env <env> --json",
+			"validate --file <path> --json",
+			"review --base <ref> --env <env> --json",
+			"deploy <env> --dry-run --json",
 			"deploy vapor <env> --dry-run --json",
-			"var push --json --reason",
-			"var vapor-secret --env <env> --key <key> --json",
+			"var pull --env <env> --key <key> --json",
+			"var history --env <env> --key <key> --json",
 			"scan --json",
-			"access create --name <name> --kind ci --grant <env>:reader --json",
+			"access status --json",
+			"access approvers --json",
+			"access approvers --env <env> --json",
+			"access list --json",
+			"access requests list --json",
+			"access grants --json",
+			"access matrix --json",
 		},
-		"safety": []string{
+		Safety: []string{
+			"Treat commands as an allowlist for default agent behavior, not a complete command inventory.",
 			"Do not print secrets unless the user explicitly asks for --show-values.",
 			"Prefer JSON output for machine-readable workflows.",
-			"Record a --reason when changing encrypted state.",
-			"Run validate before pushing significant changes.",
+			"Do not run commands that write files, mutate encrypted state, or change access unless the user explicitly asks.",
+			"Use dry-run for deploy or pull planning; do not run deploy or pull write paths unless the user explicitly asks.",
+			"Do not grant, revoke, approve, or deny access unless the user explicitly asks.",
+			"Run validate before suggesting changes to encrypted state.",
 			"Treat .env files as local-only unless the repository policy says otherwise.",
 		},
 	}
 	if *jsonOut {
 		return printJSON(r.out, capabilities)
 	}
-	for _, command := range capabilities["commands"].([]string) {
+	for _, command := range capabilities.Commands {
 		fmt.Fprintf(r.out, "ghostable %s\n", success(command))
 	}
 	return nil
@@ -313,8 +334,9 @@ func agentInstructions() string {
 		"Use Ghostable for local encrypted environment management.",
 		"",
 		"- Prefer `ghostable ... --json` for machine-readable workflows.",
+		"- Treat `ghostable agents capabilities --json` as the safe default command allowlist.",
 		"- Do not print secret values unless the user explicitly asks for `--show-values`.",
-		"- Prefer `ghostable env diff --env <env> --json` before changing encrypted state.",
+		"- Prefer `ghostable env diff --env <env> --file <path> --json` or `ghostable env diff --from <source-env> --to <target-env> --json` before changing encrypted state.",
 		"- Include `--reason` when pushing, syncing, deleting, or promoting variables.",
 		"- Run `ghostable validate --env <env> --json` before commits that change `.ghostable`.",
 		"- Run `ghostable scan --json` before commits to catch hard-coded secrets.",

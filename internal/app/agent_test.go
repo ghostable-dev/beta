@@ -95,6 +95,69 @@ func TestRunAgentsAlias(t *testing.T) {
 	}
 }
 
+func TestRunAgentCapabilitiesListsSafeCommands(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "agents", "capabilities", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	var capabilities agentCapabilitiesPayload
+	if err := json.Unmarshal(output.Bytes(), &capabilities); err != nil {
+		t.Fatalf("parse capabilities JSON: %v\n%s", err, output.String())
+	}
+
+	for _, expected := range []string{
+		"status --json",
+		"env list --json",
+		"env diff --from <source-env> --to <target-env> --json",
+		"env pull --env <env> --file <path> --dry-run --json",
+		"validate --env <env> --json",
+		"review --base <ref> --env <env> --json",
+		"deploy <env> --dry-run --json",
+		"var pull --env <env> --key <key> --json",
+		"scan --json",
+		"access status --json",
+		"access approvers --env <env> --json",
+		"access requests list --json",
+		"access matrix --json",
+	} {
+		if !containsString(capabilities.Commands, expected) {
+			t.Fatalf("expected safe agent command %q in capabilities: %#v", expected, capabilities.Commands)
+		}
+	}
+
+	unsafeFragments := []string{
+		"--show-values",
+		"env push",
+		"env sync",
+		"env delete",
+		"env rename",
+		"var push",
+		"var promote",
+		"var delete",
+		"var vapor-secret",
+		"schema rule",
+		"schema file",
+		"schema key",
+		"access create",
+		"access share",
+		"access revoke",
+		"access delete",
+		"access requests approve",
+		"access requests deny",
+	}
+	for _, command := range capabilities.Commands {
+		for _, unsafeFragment := range unsafeFragments {
+			if strings.Contains(command, unsafeFragment) {
+				t.Fatalf("did not expect unsafe agent command %q in capabilities: %#v", command, capabilities.Commands)
+			}
+		}
+	}
+}
+
 func TestRunAccessCreateUsesSelectors(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 

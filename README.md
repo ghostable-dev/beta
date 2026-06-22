@@ -93,8 +93,8 @@ Automation and agents should pass flags and prefer `--json`.
 - `schema file|rule|key` manages local validation schema files.
 - `device create|join|list|status|approvers|share|grants|revoke` manages local device
   records, scoped automation devices, and policy grants.
-- `agent init|instructions|capabilities` emits safe instructions for coding
-  agents.
+- `agent init|instructions|capabilities` emits safe instructions and a
+  recommended read-only/dry-run command allowlist for coding agents.
 - `scan` finds hard-coded secrets locally without modifying files.
 
 ## Review
