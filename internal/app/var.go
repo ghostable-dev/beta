@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/ghostable-dev/beta/internal/cli"
 	"github.com/ghostable-dev/beta/internal/domain"
@@ -14,10 +15,16 @@ import (
 var variableCommandOptions = []commandOption{
 	{Label: "push", Description: "Save one variable"},
 	{Label: "pull", Description: "Read or write one variable"},
+	{Label: "copy", Description: "Promote a variable between environments"},
 	{Label: "delete", Description: "Remove one variable"},
 	{Label: "history", Description: "Show change history"},
 	{Label: "context", Description: "View or update the encrypted note"},
 	{Label: "vapor-secret", Description: "Mark a variable for Vapor Secrets"},
+}
+
+var variableCopyModeOptions = []commandOption{
+	{Label: "value", Description: "Copy the value and variable flags"},
+	{Label: "key only", Value: "key-only", Description: "Add the key to target layout without copying its value"},
 }
 
 func (r *Runner) runVar(args []string) error {
@@ -42,6 +49,8 @@ func (r *Runner) runVar(args []string) error {
 		return r.runVarPush(args[1:])
 	case "pull":
 		return r.runVarPull(args[1:])
+	case "copy":
+		return r.runVarCopy(args[1:])
 	case "delete":
 		return r.runVarDelete(args[1:])
 	case "history":
@@ -269,6 +278,124 @@ func (r *Runner) runVarPull(args []string) error {
 	}
 	fmt.Fprintln(r.out, warn(fmt.Sprintf("%s exists in %s. Pass --file to write it or --show-values to print it.", variableKey, selected)))
 	return nil
+}
+
+func (r *Runner) runVarCopy(args []string) error {
+	fs := newFlagSet("var copy", r.errOut)
+	from := fs.String("from", "", "Source environment name")
+	to := fs.String("to", "", "Target environment name")
+	key := fs.String("key", "", "Variable name")
+	mode := fs.String("mode", "value", "Copy mode: value or key-only")
+	reason := fs.String("reason", "", "Reason stored in signed local events")
+	jsonOut := fs.Bool("json", false, "Print copy result as JSON")
+	modeProvided := hasFlag(args, "mode")
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
+		return err
+	}
+	copyMode, err := normalizeVariableCopyMode(*mode)
+	if err != nil {
+		return err
+	}
+	repo, err := r.openRepo()
+	if err != nil {
+		return err
+	}
+	source, err := r.selectEnvironmentWithLabel(repo, *from, "Select source environment", "from")
+	if err != nil {
+		return err
+	}
+	target, err := r.selectEnvironmentExcept(repo, *to, source, "Select target environment", "to")
+	if err != nil {
+		return err
+	}
+	variableKey, err := r.selectVariableKey(repo, source, *key)
+	if err != nil {
+		return err
+	}
+	variable, exists, err := repo.GetVariable(source, variableKey)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%s was not found in %s", variableKey, source)
+	}
+	if r.interactive && !modeProvided {
+		copyMode, err = r.selectVariableCopyMode("Copy mode", copyMode)
+		if err != nil {
+			return err
+		}
+		r.printPromptAnswer("Copy mode", variableCopyModeLabel(copyMode))
+	}
+	if copyMode == "key-only" {
+		if err := repo.AddLayoutKey(target, variableKey); err != nil {
+			return err
+		}
+		return r.printVariableCopyResult(*jsonOut, source, target, variableKey, copyMode)
+	}
+
+	commented := variable.Commented
+	vaporSecret := variable.VaporSecret
+	if err := repo.SetVariableWithOptions(target, variableKey, variable.Value, store.VariableWriteOptions{
+		Reason:      *reason,
+		Commented:   &commented,
+		VaporSecret: &vaporSecret,
+	}); err != nil {
+		return err
+	}
+	return r.printVariableCopyResult(*jsonOut, source, target, variableKey, copyMode)
+}
+
+func (r *Runner) printVariableCopyResult(jsonOut bool, source string, target string, key string, mode string) error {
+	payload := map[string]interface{}{
+		"source":      source,
+		"environment": target,
+		"key":         key,
+		"mode":        mode,
+		"copied":      true,
+	}
+	if jsonOut {
+		return printJSON(r.out, payload)
+	}
+	if mode == "key-only" {
+		fmt.Fprintln(r.out, success(fmt.Sprintf("Added %s to %s layout from %s.", key, target, source)))
+		return nil
+	}
+	fmt.Fprintln(r.out, success(fmt.Sprintf("Copied %s from %s to %s.", key, source, target)))
+	return nil
+}
+
+func normalizeVariableCopyMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "value", "values":
+		return "value", nil
+	case "key-only", "key only", "keys-only", "keys only", "layout", "none":
+		return "key-only", nil
+	default:
+		return "", fmt.Errorf("invalid variable copy mode %q; use value or key-only", value)
+	}
+}
+
+func (r *Runner) selectVariableCopyMode(label string, fallback string) (string, error) {
+	fallback, err := normalizeVariableCopyMode(fallback)
+	if err != nil {
+		return "", err
+	}
+	defaultIndex := 0
+	for index, option := range variableCopyModeOptions {
+		if option.Value == fallback || option.Label == fallback {
+			defaultIndex = index
+			break
+		}
+	}
+	return r.prompts.SelectOptions(label, promptOptions(variableCopyModeOptions), defaultIndex)
+}
+
+func variableCopyModeLabel(value string) string {
+	if value == "key-only" {
+		return "key only"
+	}
+	return "value"
 }
 
 func (r *Runner) runVarDelete(args []string) error {

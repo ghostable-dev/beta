@@ -2,11 +2,13 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ghostable-dev/beta/internal/domain"
 	"github.com/ghostable-dev/beta/internal/prompt"
 	"github.com/ghostable-dev/beta/internal/store"
 )
@@ -196,6 +198,108 @@ func TestRunVarVaporSecretTogglesMetadata(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"vaporSecret": false`) {
 		t.Fatalf("expected JSON payload to include disabled Vapor Secret state, got:\n%s", output.String())
+	}
+}
+
+func TestRunVarCopyCopiesValueAndMetadata(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("staging", "staging"); err != nil {
+		t.Fatal(err)
+	}
+	commented := true
+	vaporSecret := true
+	if err := repo.SetVariableWithOptions("default", "APP_KEY", "secret", store.VariableWriteOptions{
+		Reason:      "test",
+		Commented:   &commented,
+		VaporSecret: &vaporSecret,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "copy", "--from", "default", "--to", "staging", "--key", "APP_KEY", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarCopy(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	variable, exists, err := repo.GetVariable("staging", "APP_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || variable.Value != "secret" || !variable.Commented || !variable.VaporSecret {
+		t.Fatalf("expected copied value and metadata, got exists=%v variable=%#v", exists, variable)
+	}
+	for _, expected := range []string{
+		`"key": "APP_KEY"`,
+		`"mode": "value"`,
+		`"copied": true`,
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("expected JSON output to contain %q, got:\n%s", expected, output.String())
+		}
+	}
+}
+
+func TestRunVarCopyPromptsForKeyOnlyPromotion(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("staging", "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("production", "production"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "ALPHA", "one", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("1\n2\n1\n2\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "copy"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+
+	if err := runner.runVarCopy(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{
+		"Select source environment",
+		"Select target environment",
+		"Select a variable",
+		"Copy mode",
+		promptAnswerText("Copy mode", "key only"),
+		success("Added ALPHA to staging layout from default."),
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected var copy output to contain %q:\n%s", expected, text)
+		}
+	}
+	values, err := repo.ReadVariables("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("did not expect key-only copy to write values, got %#v", values)
+	}
+	var layout domain.Layout
+	content, err := os.ReadFile(filepath.Join(root, ".ghostable", "environments", "staging", "layout.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(content, &layout); err != nil {
+		t.Fatal(err)
+	}
+	if layout.Keys["ALPHA"] == 0 {
+		t.Fatalf("expected ALPHA in staging layout, got %#v", layout.Keys)
 	}
 }
 

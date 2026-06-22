@@ -280,19 +280,23 @@ type Event struct {
 }
 
 type EnvDiff struct {
-	Environment string      `json:"environment"`
-	File        string      `json:"file"`
-	Added       []DiffEntry `json:"added"`
-	Changed     []DiffEntry `json:"changed"`
-	Removed     []DiffEntry `json:"removed"`
-	Unchanged   []string    `json:"unchanged"`
-	Summary     DiffSummary `json:"summary"`
+	Environment       string      `json:"environment"`
+	SourceEnvironment string      `json:"sourceEnvironment,omitempty"`
+	TargetEnvironment string      `json:"targetEnvironment,omitempty"`
+	File              string      `json:"file"`
+	Added             []DiffEntry `json:"added"`
+	Changed           []DiffEntry `json:"changed"`
+	Removed           []DiffEntry `json:"removed"`
+	Unchanged         []string    `json:"unchanged"`
+	Summary           DiffSummary `json:"summary"`
 }
 
 type DiffEntry struct {
 	Key         string `json:"key"`
 	LocalValue  string `json:"localValue,omitempty"`
 	StoredValue string `json:"storedValue,omitempty"`
+	SourceValue string `json:"sourceValue,omitempty"`
+	TargetValue string `json:"targetValue,omitempty"`
 }
 
 type DiffSummary struct {

@@ -42,6 +42,19 @@ func (r Repository) GenerateLayout(env string, keys []string) error {
 	return r.writeLayout(env, ranks)
 }
 
+func (r Repository) AddLayoutKey(env string, key string) error {
+	if err := r.requireEnvironment(env); err != nil {
+		return err
+	}
+	if err := r.requireWrite(env); err != nil {
+		return err
+	}
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	return r.addLayoutKey(env, key)
+}
+
 func (r Repository) CreateEnvironment(name string, envType string) (EnvironmentResult, error) {
 	if err := r.requireOwner(); err != nil {
 		return EnvironmentResult{}, err

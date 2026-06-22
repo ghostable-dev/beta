@@ -463,34 +463,65 @@ func (r Repository) Diff(env string, filePath string, only []string, showValues 
 	if err != nil {
 		return domain.EnvDiff{}, err
 	}
+	storedValues := valuesFromVariables(storedVariables)
 
+	return buildEnvDiff(domain.EnvDiff{
+		Environment:       env,
+		TargetEnvironment: env,
+		File:              filePath,
+	}, localValues, storedValues, only, showValues), nil
+}
+
+func (r Repository) DiffEnvironments(source string, target string, only []string, showValues bool) (domain.EnvDiff, error) {
+	sourceVariables, err := r.ReadVariables(source)
+	if err != nil {
+		return domain.EnvDiff{}, err
+	}
+	targetVariables, err := r.ReadVariables(target)
+	if err != nil {
+		return domain.EnvDiff{}, err
+	}
+
+	return buildEnvDiff(domain.EnvDiff{
+		Environment:       target,
+		SourceEnvironment: source,
+		TargetEnvironment: target,
+	}, valuesFromVariables(sourceVariables), valuesFromVariables(targetVariables), only, showValues), nil
+}
+
+func buildEnvDiff(diff domain.EnvDiff, sourceValues map[string]string, targetValues map[string]string, only []string, showValues bool) domain.EnvDiff {
 	onlySet := stringSet(only)
 	keys := make(map[string]bool)
-	for key := range localValues {
+	for key := range sourceValues {
 		if len(onlySet) == 0 || onlySet[key] {
 			keys[key] = true
 		}
 	}
-	for key := range storedVariables {
+	for key := range targetValues {
 		if len(onlySet) == 0 || onlySet[key] {
 			keys[key] = true
 		}
 	}
 
-	diff := domain.EnvDiff{Environment: env, File: filePath}
 	for _, key := range sortedSet(keys) {
-		localValue, localOK := localValues[key]
-		storedVariable, storedOK := storedVariables[key]
+		sourceValue, sourceOK := sourceValues[key]
+		targetValue, targetOK := targetValues[key]
 		switch {
-		case localOK && !storedOK:
-			diff.Added = append(diff.Added, domain.DiffEntry{Key: key, LocalValue: valueForOutput(localValue, showValues)})
-		case !localOK && storedOK:
-			diff.Removed = append(diff.Removed, domain.DiffEntry{Key: key, StoredValue: valueForOutput(storedVariable.Value, showValues)})
-		case localOK && storedOK && localValue != storedVariable.Value:
+		case sourceOK && !targetOK:
+			value := valueForOutput(sourceValue, showValues)
+			diff.Added = append(diff.Added, domain.DiffEntry{Key: key, LocalValue: value, SourceValue: value})
+		case !sourceOK && targetOK:
+			value := valueForOutput(targetValue, showValues)
+			diff.Removed = append(diff.Removed, domain.DiffEntry{Key: key, StoredValue: value, TargetValue: value})
+		case sourceOK && targetOK && sourceValue != targetValue:
+			sourceOutput := valueForOutput(sourceValue, showValues)
+			targetOutput := valueForOutput(targetValue, showValues)
 			diff.Changed = append(diff.Changed, domain.DiffEntry{
 				Key:         key,
-				LocalValue:  valueForOutput(localValue, showValues),
-				StoredValue: valueForOutput(storedVariable.Value, showValues),
+				LocalValue:  sourceOutput,
+				StoredValue: targetOutput,
+				SourceValue: sourceOutput,
+				TargetValue: targetOutput,
 			})
 		default:
 			diff.Unchanged = append(diff.Unchanged, key)
@@ -503,5 +534,13 @@ func (r Repository) Diff(env string, filePath string, only []string, showValues 
 		Removed:   len(diff.Removed),
 		Unchanged: len(diff.Unchanged),
 	}
-	return diff, nil
+	return diff
+}
+
+func valuesFromVariables(variables map[string]domain.Variable) map[string]string {
+	values := make(map[string]string, len(variables))
+	for key, variable := range variables {
+		values[key] = variable.Value
+	}
+	return values
 }

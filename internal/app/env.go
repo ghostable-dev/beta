@@ -23,10 +23,9 @@ var envCommandOptions = []commandOption{
 	{Label: "push", Description: "Store values from an env file"},
 	{Label: "sync", Description: "Push and remove missing keys"},
 	{Label: "pull", Description: "Write stored values to an env file"},
-	{Label: "diff", Description: "Compare local and stored values"},
+	{Label: "diff", Description: "Compare an env file or environment"},
 	{Label: "validate", Description: "Check values against schema rules"},
 	{Label: "history", Description: "Show signed change history"},
-	{Label: "copy", Description: "Copy values to another environment"},
 	{Label: "duplicate", Description: "Create an environment from another"},
 	{Label: "rename", Description: "Rename an environment"},
 	{Label: "delete", Description: "Remove an environment"},
@@ -104,8 +103,6 @@ func (r *Runner) runEnv(args []string) error {
 		return r.runEnvPush(args[1:], false)
 	case "sync":
 		return r.runEnvPush(args[1:], true)
-	case "copy":
-		return r.runEnvCopy(args[1:])
 	case "pull":
 		return r.runEnvPull(args[1:])
 	case "diff":
@@ -469,52 +466,6 @@ func (r *Runner) runEnvPush(args []string, syncMode bool) error {
 	return nil
 }
 
-func (r *Runner) runEnvCopy(args []string) error {
-	fs := newFlagSet("env copy", r.errOut)
-	from := fs.String("from", "", "Source environment name")
-	to := fs.String("to", "", "Target environment name")
-	var only cli.Strings
-	fs.Var(&only, "keys", "Comma-separated keys to copy")
-	fs.Var(&only, "only", "Only copy these keys")
-	reason := fs.String("reason", "", "Reason stored in signed local events")
-	jsonOut := fs.Bool("json", false, "Print copy summary as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
-		return err
-	}
-	repo, err := r.openRepo()
-	if err != nil {
-		return err
-	}
-	source, err := r.selectEnvironment(repo, *from)
-	if err != nil {
-		return err
-	}
-	target, err := r.selectEnvironmentExcept(repo, *to, source, "Select target environment", "to")
-	if err != nil {
-		return err
-	}
-	variables, err := repo.ReadVariables(source)
-	if err != nil {
-		return err
-	}
-	values := map[string]string{}
-	onlySet := stringSet(only)
-	for key, variable := range variables {
-		if len(onlySet) == 0 || onlySet[key] {
-			values[key] = variable.Value
-		}
-	}
-	result, err := repo.PutVariables(target, values, storePut(*reason, false))
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return printJSON(r.out, result)
-	}
-	printPushSummary(r.out, result)
-	return nil
-}
-
 func (r *Runner) runEnvPull(args []string) error {
 	fs := newFlagSet("env pull", r.errOut)
 	env := fs.String("env", "", "Environment name")
@@ -546,12 +497,18 @@ func (r *Runner) runEnvPull(args []string) error {
 func (r *Runner) runEnvDiff(args []string) error {
 	fs := newFlagSet("env diff", r.errOut)
 	env := fs.String("env", "", "Environment name")
+	from := fs.String("from", "", "Source environment name")
+	to := fs.String("to", "", "Target environment name")
 	file := fs.String("file", "", "Local .env path")
 	local := fs.String("local", "", "Alias for --file")
 	var only cli.Strings
 	fs.Var(&only, "only", "Only diff these keys")
 	showValues := fs.Bool("show-values", false, "Print plaintext values in diff output")
 	jsonOut := fs.Bool("json", false, "Print diff result as JSON")
+	envProvided := hasFlag(args, "env")
+	fromProvided := hasFlag(args, "from")
+	toProvided := hasFlag(args, "to")
+	fileProvided := hasFlag(args, "file") || hasFlag(args, "local")
 	if _, err := cli.Parse(fs, args, cli.BoolFlags("show-values", "json")); err != nil {
 		return err
 	}
@@ -559,6 +516,34 @@ func (r *Runner) runEnvDiff(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	environmentDiffRequested := fromProvided || toProvided
+	if environmentDiffRequested && (envProvided || fileProvided) {
+		return fmt.Errorf("pass either --from/--to for environment diff or --env/--file for file diff, not both")
+	}
+	if shouldPromptEnvironmentDiff(r.interactive, repo, environmentDiffRequested, envProvided, fileProvided) {
+		source, err := r.selectEnvironmentWithLabel(repo, *from, "Select source environment", "from")
+		if err != nil {
+			return err
+		}
+		target, err := r.selectEnvironmentExcept(repo, *to, source, "Select target environment", "to")
+		if err != nil {
+			return err
+		}
+		if source == target {
+			return fmt.Errorf("target environment must be different from source environment")
+		}
+		diff, err := repo.DiffEnvironments(source, target, only, *showValues)
+		if err != nil {
+			return err
+		}
+		if *jsonOut {
+			return printJSON(r.out, diff)
+		}
+		printDiff(r.out, diff, *showValues)
+		return nil
+	}
+
 	selected, err := r.selectEnvironment(repo, *env)
 	if err != nil {
 		return err
@@ -575,6 +560,13 @@ func (r *Runner) runEnvDiff(args []string) error {
 	}
 	printDiff(r.out, diff, *showValues)
 	return nil
+}
+
+func shouldPromptEnvironmentDiff(interactive bool, repo store.Repository, environmentDiffRequested bool, envProvided bool, fileProvided bool) bool {
+	if environmentDiffRequested {
+		return true
+	}
+	return interactive && !envProvided && !fileProvided && len(repo.Environments()) > 1
 }
 
 func (r *Runner) runEnvValidate(args []string) error {
@@ -1293,11 +1285,12 @@ func printPushSummary(out io.Writer, result store.PushResult) {
 }
 
 func printDiff(out io.Writer, diff domain.EnvDiff, showValues bool) {
+	fmt.Fprintf(out, "%s %s -> %s\n", warn("Diff:"), success(diffSourceLabel(diff)), success(diffTargetLabel(diff)))
 	for _, entry := range diff.Added {
 		fmt.Fprintf(out, "%s%s\n", success("+ "+entry.Key), valueSuffix(entry.LocalValue, showValues))
 	}
 	for _, entry := range diff.Changed {
-		fmt.Fprintf(out, "%s%s\n", warn("~ "+entry.Key), valueSuffix(entry.LocalValue, showValues))
+		fmt.Fprintf(out, "%s%s\n", warn("~ "+entry.Key), changedValueSuffix(entry, showValues))
 	}
 	for _, entry := range diff.Removed {
 		fmt.Fprintf(out, "%s%s\n", danger("- "+entry.Key), valueSuffix(entry.StoredValue, showValues))
@@ -1311,9 +1304,39 @@ func printDiff(out io.Writer, diff domain.EnvDiff, showValues bool) {
 	)
 }
 
+func diffSourceLabel(diff domain.EnvDiff) string {
+	if diff.SourceEnvironment != "" {
+		return diff.SourceEnvironment
+	}
+	if diff.File != "" {
+		return diff.File
+	}
+	return "source"
+}
+
+func diffTargetLabel(diff domain.EnvDiff) string {
+	if diff.TargetEnvironment != "" {
+		return diff.TargetEnvironment
+	}
+	if diff.Environment != "" {
+		return diff.Environment
+	}
+	return "target"
+}
+
 func valueSuffix(value string, show bool) string {
 	if !show || value == "" {
 		return ""
 	}
 	return "=" + dotenv.FormatValue(value)
+}
+
+func changedValueSuffix(entry domain.DiffEntry, show bool) string {
+	if !show || entry.LocalValue == "" {
+		return ""
+	}
+	if entry.StoredValue == "" {
+		return valueSuffix(entry.LocalValue, show)
+	}
+	return "=" + dotenv.FormatValue(entry.LocalValue) + " -> " + dotenv.FormatValue(entry.StoredValue)
 }
