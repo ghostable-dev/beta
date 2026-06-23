@@ -22,6 +22,7 @@ var envCommandOptions = []commandOption{
 	{Label: "push", Description: "Store values from an env file"},
 	{Label: "sync", Description: "Push and remove missing keys"},
 	{Label: "pull", Description: "Write stored values to an env file"},
+	{Label: "run", Description: "Run a command with decrypted environment values"},
 	{Label: "diff", Description: "Compare an env file or environment"},
 	{Label: "history", Description: "Show signed change history"},
 	{Label: "rename", Description: "Rename an environment"},
@@ -105,6 +106,8 @@ func (r *Runner) runEnv(args []string) error {
 		return r.runEnvPush(args[1:], true)
 	case "pull":
 		return r.runEnvPull(args[1:])
+	case "run":
+		return r.runEnvRun(args[1:])
 	case "diff":
 		return r.runEnvDiff(args[1:])
 	case "history":
@@ -340,7 +343,7 @@ func (r *Runner) runEnvCreate(args []string) error {
 	} else {
 		fmt.Fprintln(r.out, warn(fmt.Sprintf("%s already exists.", result.Environment.Name)))
 	}
-	return nil
+	return r.maybePromptGenerateExample(repo, seedResult.pushResult != nil && len(seedResult.pushResult.Created) > 0, false, *jsonOut)
 }
 
 func (r *Runner) resolveCreateSeed(repo store.Repository, fromEnv string, fromFile string, seedMode string, seedProvided bool) (string, string, error) {
@@ -461,7 +464,11 @@ func (r *Runner) runEnvPush(args []string, syncMode bool) error {
 	if !*assumeYes {
 		printPushSummary(r.out, result)
 	}
-	return nil
+	return r.maybePromptGenerateExample(repo, pushResultChangedKeys(result), len(result.Deleted) > 0, *jsonOut)
+}
+
+func pushResultChangedKeys(result store.PushResult) bool {
+	return len(result.Created) > 0 || len(result.Deleted) > 0
 }
 
 func (r *Runner) runEnvPull(args []string) error {
@@ -750,12 +757,13 @@ func (r *Runner) runEnvDuplicate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := seedEnvironment(repo, environmentSeedInput{
+	seedResult, err := seedEnvironment(repo, environmentSeedInput{
 		target:    target,
 		sourceEnv: source,
 		mode:      seedMode,
 		reason:    *reason,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if *jsonOut {
@@ -765,7 +773,7 @@ func (r *Runner) runEnvDuplicate(args []string) error {
 		fmt.Fprintln(r.out)
 	}
 	fmt.Fprintln(r.out, success(fmt.Sprintf("Duplicated %s to %s.", source, target)))
-	return nil
+	return r.maybePromptGenerateExample(repo, seedResult.pushResult != nil && len(seedResult.pushResult.Created) > 0, false, *jsonOut)
 }
 
 var environmentTypeChoices = []string{"local", "development", "preview", "staging", "production", "custom"}

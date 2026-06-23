@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -144,6 +146,333 @@ func TestRunEnvValidateIsUnknown(t *testing.T) {
 	}
 }
 
+func TestRunEnvRunInjectsValuesAndInheritsByDefault(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "GHOSTABLE_ENV_RUN_HELPER", "1", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "APP_NAME", "Ghostable", "test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL_ONLY", "from-shell")
+
+	var output bytes.Buffer
+	runner := NewRunner(append([]string{"ghostable", "env", "run", "--env", "default", "--"}, envRunHelperCommand()...), strings.NewReader(""), &output, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{"APP_NAME=Ghostable", "SHELL_ONLY=from-shell"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected env run output to contain %q:\n%s", expected, text)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("env run should not write .env, stat err: %v", err)
+	}
+}
+
+func TestRunEnvRunInteractivePromptsForCommandAndOptions(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"APP_NAME":                 "Ghostable",
+	})
+	t.Setenv("SHELL_ONLY", "from-shell")
+
+	input := &oneByteReader{reader: strings.NewReader(envRunHelperCommandLine() + "\n1\nn\nn\ny\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "run"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{
+		"Command to run",
+		"Inject variables",
+		"Validate before running?",
+		"Mask command output?",
+		"Inherit current shell environment?",
+		"APP_NAME=Ghostable",
+		"SHELL_ONLY=from-shell",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected interactive env run output to contain %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestRunEnvRunInteractiveCanSelectKeys(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"APP_NAME":                 "Ghostable",
+		"SECRET_TOKEN":             "super-secret-value",
+	})
+
+	input := &oneByteReader{reader: strings.NewReader(envRunHelperCommandLine() + "\n2\nAPP_NAME,GHOSTABLE_ENV_RUN_HELPER\nn\nn\ny\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "run"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, "Available keys:") || !strings.Contains(text, "APP_NAME=Ghostable") {
+		t.Fatalf("expected selected keys prompt and selected value:\n%s", text)
+	}
+	if !strings.Contains(text, "SECRET_TOKEN=") || strings.Contains(text, "super-secret-value") {
+		t.Fatalf("expected unselected secret value to be omitted:\n%s", text)
+	}
+}
+
+func TestRunEnvRunInteractiveSuggestsProjectCommands(t *testing.T) {
+	root := setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"APP_NAME":                 "Ghostable",
+	})
+	if err := os.WriteFile(filepath.Join(root, "composer.json"), []byte(`{"scripts":{"test":"phpunit","post-install-cmd":"ignored"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"dev":"vite","build":"vite build"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("Custom command\n" + envRunHelperCommandLine() + "\n1\nn\nn\ny\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "run"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{"composer test", "npm run dev", "npm run build", "Custom command", "APP_NAME=Ghostable"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected suggested command output to contain %q:\n%s", expected, text)
+		}
+	}
+	if strings.Contains(text, "post-install-cmd") {
+		t.Fatalf("did not expect composer event scripts to be suggested:\n%s", text)
+	}
+}
+
+func TestRunEnvRunInteractiveHidesRiskySuggestionsForProduction(t *testing.T) {
+	root := setupRepoForEnvRunTest(t, map[string]string{})
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("production", "production"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("production", "GHOSTABLE_ENV_RUN_HELPER", "1", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artisan"), []byte("#!/usr/bin/env php\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "composer.json"), []byte(`{"scripts":{"test":"phpunit","deploy":"ship"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"build":"vite build","migrate":"node migrate.js"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("Custom command\n" + envRunHelperCommandLine() + "\n1\nn\nn\ny\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "run", "--env", "production"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{"php artisan about", "composer test", "npm run build", "Custom command"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected production suggestions to contain %q:\n%s", expected, text)
+		}
+	}
+	for _, hidden := range []string{"php artisan migrate", "composer deploy", "npm run migrate", "php artisan queue:work"} {
+		if strings.Contains(text, hidden) {
+			t.Fatalf("did not expect risky production suggestion %q:\n%s", hidden, text)
+		}
+	}
+}
+
+func TestRunEnvRunInteractiveRiskyCustomCommandRequiresEnvironmentName(t *testing.T) {
+	root := setupRepoForEnvRunTest(t, map[string]string{})
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("production", "production"); err != nil {
+		t.Fatal(err)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("echo migrate\nwrong\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "run", "--env", "production"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	err = runner.runEnvRun(runner.args[3:])
+	if err == nil {
+		t.Fatal("expected risky custom command to require production confirmation")
+	}
+	if !strings.Contains(err.Error(), "risky command canceled") {
+		t.Fatalf("expected risky command cancellation, got %v", err)
+	}
+	if !strings.Contains(output.String(), "Type production to continue") {
+		t.Fatalf("expected production confirmation prompt, got:\n%s", output.String())
+	}
+}
+
+func TestRunEnvRunNoInheritOmitsShellValues(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "GHOSTABLE_ENV_RUN_HELPER", "1", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "APP_NAME", "Ghostable", "test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL_ONLY", "from-shell")
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--no-inherit", "--"}, envRunHelperCommand()...)
+	runner := NewRunner(args, strings.NewReader(""), &output, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, "APP_NAME=Ghostable") {
+		t.Fatalf("expected Ghostable value to be injected:\n%s", text)
+	}
+	if !strings.Contains(text, "SHELL_ONLY=") || strings.Contains(text, "SHELL_ONLY=from-shell") {
+		t.Fatalf("expected shell-only value to be omitted with --no-inherit:\n%s", text)
+	}
+}
+
+func TestRunEnvRunOnlyFiltersInjectedValues(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"APP_NAME":                 "Ghostable",
+		"SECRET_TOKEN":             "super-secret-value",
+	})
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--only", "GHOSTABLE_ENV_RUN_HELPER,APP_NAME", "--"}, envRunHelperCommand()...)
+	runner := NewRunner(args, strings.NewReader(""), &output, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, "APP_NAME=Ghostable") {
+		t.Fatalf("expected selected value to be injected:\n%s", text)
+	}
+	if !strings.Contains(text, "SECRET_TOKEN=") || strings.Contains(text, "super-secret-value") {
+		t.Fatalf("expected unselected value to be omitted:\n%s", text)
+	}
+}
+
+func TestRunEnvRunMaskOutputRedactsInjectedValues(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"SECRET_TOKEN":             "super-secret-value",
+	})
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--mask-output", "--"}, envRunHelperCommand()...)
+	runner := NewRunner(args, strings.NewReader(""), &output, &output)
+	if err := runner.runEnvRun(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if strings.Contains(text, "super-secret-value") {
+		t.Fatalf("expected masked output to hide secret value:\n%s", text)
+	}
+	if !strings.Contains(text, "SECRET_TOKEN=[secret]") {
+		t.Fatalf("expected masked output placeholder, got:\n%s", text)
+	}
+}
+
+func TestRunEnvRunStrictRejectsMissingRequestedKeys(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+	})
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--only", "MISSING_KEY", "--strict", "--"}, envRunHelperCommand()...)
+	runner := NewRunner(args, strings.NewReader(""), &output, &output)
+	err := runner.runEnvRun(runner.args[3:])
+	if err == nil {
+		t.Fatal("expected missing key to fail in strict mode")
+	}
+	if !strings.Contains(err.Error(), "missing requested 1 key: MISSING_KEY") {
+		t.Fatalf("expected missing key error, got %v", err)
+	}
+	if output.String() != "" {
+		t.Fatalf("expected child command not to run, got output:\n%s", output.String())
+	}
+}
+
+func TestRunEnvRunStrictValidatesSchemaBeforeRunning(t *testing.T) {
+	root := setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+	})
+	if err := os.WriteFile(filepath.Join(root, ".ghostable", "schema.yaml"), []byte("REQUIRED_KEY:\n  - required\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--strict", "--"}, envRunHelperCommand()...)
+	runner := NewRunner(args, strings.NewReader(""), &output, &output)
+	err := runner.runEnvRun(runner.args[3:])
+	if err == nil {
+		t.Fatal("expected strict validation to fail")
+	}
+	if !strings.Contains(err.Error(), "strict validation failed") {
+		t.Fatalf("expected strict validation error, got %v", err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "REQUIRED_KEY") {
+		t.Fatalf("expected validation output to mention REQUIRED_KEY, got:\n%s", text)
+	}
+	if strings.Contains(text, "APP_NAME=") || strings.Contains(text, "SHELL_ONLY=") {
+		t.Fatalf("expected child command not to run, got output:\n%s", text)
+	}
+}
+
+func TestRunEnvRunPropagatesChildExitCode(t *testing.T) {
+	setupRepoForEnvRunTest(t, map[string]string{
+		"GHOSTABLE_ENV_RUN_HELPER": "1",
+		"EXIT_CODE":                "7",
+	})
+
+	var output bytes.Buffer
+	args := append([]string{"ghostable", "env", "run", "--env", "default", "--"}, envRunHelperCommand()...)
+	code := Run(args, strings.NewReader(""), &output, &output)
+	if code != 7 {
+		t.Fatalf("expected child exit code 7, got %d with output:\n%s", code, output.String())
+	}
+}
+
 func TestEnvHelpHidesInternalCommands(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
@@ -163,6 +492,42 @@ func TestEnvHelpHidesInternalCommands(t *testing.T) {
 	if strings.Contains(text, "\n  layout") || strings.Contains(text, "Manage environment key order") {
 		t.Fatalf("did not expect hidden env layout command in help:\n%s", text)
 	}
+}
+
+func setupRepoForEnvRunTest(t *testing.T, values map[string]string) string {
+	t.Helper()
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range values {
+		if err := repo.SetVariable("default", key, value, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func envRunHelperCommand() []string {
+	return []string{os.Args[0], "-test.run=TestEnvRunHelperProcess"}
+}
+
+func envRunHelperCommandLine() string {
+	return strconv.Quote(os.Args[0]) + " -test.run=TestEnvRunHelperProcess"
+}
+
+func TestEnvRunHelperProcess(t *testing.T) {
+	if os.Getenv("GHOSTABLE_ENV_RUN_HELPER") != "1" {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "APP_NAME=%s\n", os.Getenv("APP_NAME"))
+	fmt.Fprintf(os.Stdout, "SECRET_TOKEN=%s\n", os.Getenv("SECRET_TOKEN"))
+	fmt.Fprintf(os.Stdout, "SHELL_ONLY=%s\n", os.Getenv("SHELL_ONLY"))
+	if os.Getenv("EXIT_CODE") == "7" {
+		os.Exit(7)
+	}
+	os.Exit(0)
 }
 
 func TestRunEnvDiffWithFromAndToComparesEnvironments(t *testing.T) {

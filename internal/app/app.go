@@ -41,8 +41,20 @@ func printRunError(err error, errOut io.Writer) int {
 		fmt.Fprintln(errOut, warn("Canceled."))
 		return 130
 	}
+	var exitErr commandExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
 	fmt.Fprintln(errOut, danger("Error:"), err)
 	return 1
+}
+
+type commandExitError struct {
+	Code int
+}
+
+func (err commandExitError) Error() string {
+	return fmt.Sprintf("command exited with status %d", err.Code)
 }
 
 func NewRunner(args []string, in io.Reader, out io.Writer, errOut io.Writer) *Runner {
@@ -100,6 +112,10 @@ func (r *Runner) Run() error {
 		return r.runReview(args[2:])
 	case "scan":
 		return r.runScan(args[2:])
+	case "example":
+		return r.runExample(args[2:])
+	case "hygiene":
+		return r.runHygiene(args[2:])
 	case "schema":
 		return r.runSchema(args[2:])
 	case "agent", "agents":
@@ -157,6 +173,8 @@ var rootCommandOptions = []commandOption{
 	{Label: "review", Description: "Review code changes against encrypted ENV state"},
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
 	{Label: "scan", Description: "Find hard-coded secrets"},
+	{Label: "example", Description: "Generate .env.example from encrypted state and code"},
+	{Label: "hygiene", Description: "Report stale, unused, and rotation-due secrets"},
 	{Label: "agents", Value: "agent", Description: "Print agent guidance"},
 	{Label: "access", Description: "Manage devices and access grants"},
 }
@@ -240,6 +258,8 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable review --base <ref> [options]")
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")
 	fmt.Fprintln(r.out, "  ghostable scan [paths...] [options]")
+	fmt.Fprintln(r.out, "  ghostable example <command> [options]")
+	fmt.Fprintln(r.out, "  ghostable hygiene [command] [options]")
 	fmt.Fprintln(r.out, "  ghostable agents <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable access <command> [options]")
 	fmt.Fprintln(r.out)

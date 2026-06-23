@@ -100,6 +100,180 @@ func TestRunVarPushSelectsVariableFromFile(t *testing.T) {
 	}
 }
 
+func TestRunVarPushDefaultsToEnvironmentFileInInteractiveMode(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("ALPHA=one\nBETA=two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := strings.NewReader("2\nn\n")
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push", "--env", "default"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+
+	if err := runner.runVarPush(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "Select a variable") {
+		t.Fatalf("expected variable selector, got:\n%s", text)
+	}
+
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variable, exists, err := repo.GetVariable("default", "BETA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || variable.Value != "two" {
+		t.Fatalf("expected selected default file variable to be stored, got exists=%v variable=%#v", exists, variable)
+	}
+}
+
+func TestRunVarPushCanInferEnvironmentNameDotEnvFile(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("staging", "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "staging.env"), []byte("STAGING_ONLY=yes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := strings.NewReader("1\nn\n")
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push", "--env", "staging"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+
+	if err := runner.runVarPush(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err = store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variable, exists, err := repo.GetVariable("staging", "STAGING_ONLY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || variable.Value != "yes" {
+		t.Fatalf("expected staging.env variable to be stored, got exists=%v variable=%#v", exists, variable)
+	}
+}
+
+func TestVarPushEmptyInferredFileOnlyAllowsNewVariable(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "OLD_KEY", "old", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push", "--env", "default"}, strings.NewReader(""), &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(strings.NewReader(""), &output)
+	result, err := runner.tryVarPushFromFile(varPushFileInput{
+		repo:                 repo,
+		environment:          "default",
+		file:                 ".env",
+		fallbackOnMissingKey: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.handled || !result.newVariableOnly {
+		t.Fatalf("expected empty inferred file to require a new variable, got %#v", result)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("new key\n")}
+	output.Reset()
+	runner = NewRunner([]string{"ghostable", "var", "push", "--env", "default"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	key, err := runner.selectVariableKeyForPush(repo, "default", "", result.newVariableOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "NEW_KEY" {
+		t.Fatalf("expected NEW_KEY, got %q", key)
+	}
+	if strings.Contains(output.String(), "OLD_KEY") || strings.Contains(output.String(), "Select a variable") {
+		t.Fatalf("expected new variable prompt without stored key choices, got:\n%s", output.String())
+	}
+}
+
+func TestAskManualVariableKeyFormatsTypedKey(t *testing.T) {
+	input := &oneByteReader{reader: strings.NewReader("bad key\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+
+	key, err := runner.askManualVariableKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "BAD_KEY" {
+		t.Fatalf("expected BAD_KEY, got %q", key)
+	}
+	text := output.String()
+	if !strings.Contains(text, "Formatted key:") || !strings.Contains(text, "BAD_KEY") {
+		t.Fatalf("expected formatted key message, got:\n%s", text)
+	}
+}
+
+func TestAskManualVariableKeyRejectsUnusableInput(t *testing.T) {
+	input := &oneByteReader{reader: strings.NewReader("!!!\nGOOD_KEY\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+
+	key, err := runner.askManualVariableKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "GOOD_KEY" {
+		t.Fatalf("expected GOOD_KEY, got %q", key)
+	}
+	if !strings.Contains(output.String(), "Invalid key:") {
+		t.Fatalf("expected invalid key message, got:\n%s", output.String())
+	}
+}
+
+func TestSelectVariableKeyForPushFormatsProvidedManualKey(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "push", "--env", "default", "--key", "bad key"}, strings.NewReader(""), &output, &output)
+
+	key, err := runner.selectVariableKeyForPush(repo, "default", "bad key", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "BAD_KEY" {
+		t.Fatalf("expected BAD_KEY, got %q", key)
+	}
+}
+
 func TestRunVarPushAcceptsAbsoluteFilePath(t *testing.T) {
 	root := setupRepoForVarCommandTest(t)
 	envFile := filepath.Join(t.TempDir(), ".env.seed")

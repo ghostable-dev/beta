@@ -8,6 +8,7 @@ const (
 	AccessRequestSchema  = "ghostable.access-request.v1"
 	EnvironmentKeySchema = "ghostable.environment-key.v1"
 	AccessGrantSchema    = "ghostable.access-grant.v1"
+	SuppressionSchema    = "ghostable.suppression.v1"
 	PolicySchema         = "ghostable.policy.v1"
 	LayoutSchema         = "ghostable.layout.v1"
 	ValueSchema          = "ghostable.value.v1"
@@ -277,6 +278,21 @@ type Event struct {
 	Details        map[string]interface{} `json:"details,omitempty"`
 	SignerDeviceID string                 `json:"device_id,omitempty"`
 	ClientSig      string                 `json:"client_sig,omitempty"`
+}
+
+type SuppressionRecord struct {
+	Schema            string `json:"schema"`
+	ProjectID         string `json:"projectId"`
+	ID                string `json:"id"`
+	Code              string `json:"code"`
+	Environment       string `json:"environment,omitempty"`
+	Key               string `json:"key,omitempty"`
+	Reason            string `json:"reason"`
+	CreatedByDeviceID string `json:"createdByDeviceId"`
+	CreatedAt         string `json:"createdAt"`
+	ExpiresAt         string `json:"expiresAt,omitempty"`
+	SignerDeviceID    string `json:"device_id,omitempty"`
+	ClientSig         string `json:"client_sig,omitempty"`
 }
 
 type EnvDiff struct {
