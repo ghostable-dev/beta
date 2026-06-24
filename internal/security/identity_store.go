@@ -53,16 +53,21 @@ func (s IdentityStore) Save(identity domain.LocalIdentityRecord) error {
 
 func (s IdentityStore) Delete(projectID string) error {
 	if s.usesKeychain() {
-		return s.deleteKeychain(projectID)
+		if err := s.deleteKeychain(projectID); err != nil {
+			return err
+		}
+		return s.UnregisterProjectIdentity(projectID)
 	}
 	if s.usesWindowsCredentialManager() {
-		return s.deleteWindowsCredential(projectID)
+		if err := s.deleteWindowsCredential(projectID); err != nil {
+			return err
+		}
+		return s.UnregisterProjectIdentity(projectID)
 	}
-	err := os.Remove(s.filePath(projectID))
-	if err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.filePath(projectID)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	return s.UnregisterProjectIdentity(projectID)
 }
 
 func (s IdentityStore) Path(projectID string) string {
@@ -154,7 +159,9 @@ func (s IdentityStore) saveKeychain(identity domain.LocalIdentityRecord) error {
 	encoded := base64.StdEncoding.EncodeToString(content)
 	service := keychainService(identity.ProjectID)
 	account := keychainAccount(identity.ProjectID)
-	_ = exec.Command(macOSSecurityPath(), "delete-generic-password", "-s", service, "-a", account).Run()
+	if err := s.deleteKeychain(identity.ProjectID); err != nil {
+		return err
+	}
 	cmd := exec.Command(macOSSecurityPath(), "add-generic-password", "-U", "-s", service, "-a", account, "-w", encoded)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("unable to save Ghostable identity in macOS Keychain: %s", strings.TrimSpace(string(output)))
@@ -163,11 +170,25 @@ func (s IdentityStore) saveKeychain(identity domain.LocalIdentityRecord) error {
 }
 
 func (s IdentityStore) deleteKeychain(projectID string) error {
-	err := exec.Command(macOSSecurityPath(), "delete-generic-password", "-s", keychainService(projectID), "-a", keychainAccount(projectID)).Run()
+	output, err := exec.Command(macOSSecurityPath(), "delete-generic-password", "-s", keychainService(projectID), "-a", keychainAccount(projectID)).CombinedOutput()
 	if err != nil {
-		return nil
+		text := strings.TrimSpace(string(output))
+		if isKeychainItemNotFound(text) {
+			return nil
+		}
+		if text == "" {
+			return fmt.Errorf("unable to delete Ghostable identity from macOS Keychain: %w", err)
+		}
+		return fmt.Errorf("unable to delete Ghostable identity from macOS Keychain: %s", text)
 	}
 	return nil
+}
+
+func isKeychainItemNotFound(output string) bool {
+	normalized := strings.ToLower(output)
+	return strings.Contains(normalized, "could not be found") ||
+		strings.Contains(normalized, "not found") ||
+		strings.Contains(normalized, "-25300")
 }
 
 func macOSSecurityPath() string {

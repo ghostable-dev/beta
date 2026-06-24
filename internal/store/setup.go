@@ -107,6 +107,9 @@ func setupRepository(root string, manifestPath string, project domain.ProjectMan
 	if err := identityStore.Save(identity); err != nil {
 		return Repository{}, domain.DeviceRecord{}, err
 	}
+	if err := identityStore.RegisterProjectIdentity(identity, project.Name, root); err != nil {
+		return Repository{}, domain.DeviceRecord{}, err
+	}
 
 	return Repository{
 		Root:          root,
@@ -178,6 +181,8 @@ func Open(start string) (Repository, error) {
 			return Repository{}, err
 		}
 		identityPath = identityStore.Path(project.manifest.ID)
+		// Backfill local metadata for identities created before the registry existed.
+		_ = identityStore.RegisterProjectIdentity(identity, project.manifest.Name, project.root)
 	}
 
 	return Repository{

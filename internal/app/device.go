@@ -22,6 +22,8 @@ var deviceCommandOptions = []commandOption{
 	{Label: "join", Description: "Add this machine as a device"},
 	{Label: "share", Description: "Grant access to another device"},
 	{Label: "revoke", Description: "Remove device access"},
+	{Label: "leave", Description: "Remove this machine's local access"},
+	{Label: "cleanup", Description: "Clean up orphaned local identities"},
 	{Label: "delete", Description: "Delete a revoked device record"},
 }
 
@@ -73,19 +75,21 @@ func (r *Runner) runDevice(args []string) error {
 		return r.runDeviceMatrix(args[1:])
 	case "revoke":
 		return r.runDeviceRevoke(args[1:])
+	case "leave":
+		return r.runDeviceLeave(args[1:])
+	case "cleanup":
+		return r.runDeviceCleanup(args[1:])
 	case "delete":
 		return r.runDeviceDelete(args[1:])
 	case "requests":
 		return r.runDeviceRequests(args[1:])
-	case "leave":
-		return fmt.Errorf("%s %s is not implemented in the Go client yet", r.deviceCommandName(), args[0])
 	default:
 		return fmt.Errorf("unknown %s command %q", r.deviceCommandName(), args[0])
 	}
 }
 
 func (r *Runner) printDeviceHelp() {
-	fmt.Fprintf(r.out, "Usage: ghostable %s <status|approvers|requests|list|create|join|share|revoke|delete> [options]\n", r.deviceCommandName())
+	fmt.Fprintf(r.out, "Usage: ghostable %s <status|approvers|requests|list|create|join|share|revoke|leave|cleanup|delete> [options]\n", r.deviceCommandName())
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Commands:"))
 	printCommandDescriptions(r.out, deviceCommandOptions)
@@ -487,6 +491,103 @@ func (r *Runner) runDeviceRevoke(args []string) error {
 	if len(result.Removed) > 0 {
 		fmt.Fprintln(r.out)
 		printDeviceGrantRows(r, result.Removed, false)
+	}
+	return nil
+}
+
+func (r *Runner) runDeviceLeave(args []string) error {
+	fs := newFlagSet(r.deviceCommandName()+" leave", r.errOut)
+	assumeYes := fs.Bool("assume-yes", false, "Skip confirmation prompt")
+	fs.BoolVar(assumeYes, "y", false, "Skip confirmation prompt")
+	jsonOut := fs.Bool("json", false, "Print leave result as JSON")
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("assume-yes", "y", "json")); err != nil {
+		return err
+	}
+	repo, err := r.openRepo()
+	if err != nil {
+		return err
+	}
+
+	deviceDisplay := accessDeviceID(repo.DeviceID(), false)
+	if devices, err := repo.Devices(); err == nil {
+		deviceDisplay = accessDeviceDisplay(devices, repo.DeviceID(), false)
+	}
+	ok, err := r.confirm("Remove this machine's local Ghostable access for "+deviceDisplay+"?", *assumeYes)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("canceled")
+	}
+
+	result, err := repo.LeaveDevice()
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(r.out, result)
+	}
+	fmt.Fprintln(r.out, danger(fmt.Sprintf("Removed local access for %s.", result.Device)))
+	printAccessDetailRows(r.out, []accessDetailRow{
+		{Label: "Device ID", Value: result.DeviceID},
+		{Label: "Local key", Value: result.Identity},
+	})
+	fmt.Fprintln(r.out)
+	fmt.Fprintf(r.out, "Run `ghostable %s join` to create a new local identity, then `ghostable %s requests create` to request access again.\n", r.deviceCommandName(), r.deviceCommandName())
+	return nil
+}
+
+func (r *Runner) runDeviceCleanup(args []string) error {
+	fs := newFlagSet(r.deviceCommandName()+" cleanup", r.errOut)
+	dryRun := fs.Bool("dry-run", false, "Only show orphaned local identities")
+	assumeYes := fs.Bool("assume-yes", false, "Skip confirmation prompt")
+	fs.BoolVar(assumeYes, "y", false, "Skip confirmation prompt")
+	jsonOut := fs.Bool("json", false, "Print cleanup result as JSON")
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("dry-run", "assume-yes", "y", "json")); err != nil {
+		return err
+	}
+
+	preview, err := store.CleanupOrphanedLocalIdentities(true)
+	if err != nil {
+		return err
+	}
+	if len(preview.Orphaned) == 0 {
+		preview.DryRun = *dryRun
+		if *jsonOut {
+			return printJSON(r.out, preview)
+		}
+		fmt.Fprintln(r.out, warn("No orphaned local identities found."))
+		return nil
+	}
+	if *dryRun {
+		if *jsonOut {
+			return printJSON(r.out, preview)
+		}
+		fmt.Fprintf(r.out, warn("Found %d orphaned local identit%s."), len(preview.Orphaned), identityPluralY(len(preview.Orphaned)))
+		fmt.Fprintln(r.out)
+		printLocalIdentityCleanupRows(r.out, preview.Orphaned)
+		return nil
+	}
+
+	ok, err := r.confirm(fmt.Sprintf("Delete %d orphaned local Ghostable identit%s?", len(preview.Orphaned), identityPluralY(len(preview.Orphaned))), *assumeYes)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("canceled")
+	}
+
+	result, err := store.CleanupOrphanedLocalIdentities(false)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(r.out, result)
+	}
+	fmt.Fprintf(r.out, danger("Removed %d orphaned local identit%s."), len(result.Removed), identityPluralY(len(result.Removed)))
+	fmt.Fprintln(r.out)
+	if len(result.Removed) > 0 {
+		printLocalIdentityCleanupRows(r.out, result.Removed)
 	}
 	return nil
 }
@@ -1363,6 +1464,58 @@ func accessDeviceByID(devices []domain.DeviceRecord, deviceID string) (domain.De
 		}
 	}
 	return domain.DeviceRecord{}, false
+}
+
+func printLocalIdentityCleanupRows(out io.Writer, entries []store.LocalIdentityCleanupEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	projectWidth := len("Project")
+	deviceWidth := len("Device")
+	reasonWidth := len("Reason")
+	rootWidth := len("Repo")
+	for _, entry := range entries {
+		projectWidth = max(projectWidth, len(localIdentityProjectDisplay(entry)))
+		deviceWidth = max(deviceWidth, len(accessDeviceID(entry.DeviceID, false)))
+		reasonWidth = max(reasonWidth, len(terminalSafeText(entry.Reason)))
+		rootWidth = max(rootWidth, len(terminalSafeText(entry.Root)))
+	}
+
+	header := fmt.Sprintf("%-*s  %-*s  %-*s  %s", projectWidth, "Project", deviceWidth, "Device", reasonWidth, "Reason", "Repo")
+	fmt.Fprintln(out, warn(header))
+	fmt.Fprintf(out, "%-*s  %-*s  %-*s  %s\n",
+		projectWidth,
+		strings.Repeat("-", projectWidth),
+		deviceWidth,
+		strings.Repeat("-", deviceWidth),
+		reasonWidth,
+		strings.Repeat("-", reasonWidth),
+		strings.Repeat("-", rootWidth),
+	)
+	for _, entry := range entries {
+		fmt.Fprintf(out, "%s  %-*s  %-*s  %s\n",
+			coloredCell(localIdentityProjectDisplay(entry), projectWidth, success),
+			deviceWidth,
+			accessDeviceID(entry.DeviceID, false),
+			reasonWidth,
+			terminalSafeText(entry.Reason),
+			terminalSafeText(entry.Root),
+		)
+	}
+}
+
+func localIdentityProjectDisplay(entry store.LocalIdentityCleanupEntry) string {
+	if strings.TrimSpace(entry.ProjectName) != "" {
+		return terminalSafeText(entry.ProjectName)
+	}
+	return accessDeviceID(entry.ProjectID, false)
+}
+
+func identityPluralY(count int) string {
+	if count == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 func filterDeviceGrants(grants []store.DeviceGrant, deviceID string) []store.DeviceGrant {

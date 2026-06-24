@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,6 +258,12 @@ func TestAccessHelpShowsStatusCommand(t *testing.T) {
 	if !strings.Contains(text, "approvers") || !strings.Contains(text, "Show devices that can grant access") {
 		t.Fatalf("expected access help to describe approvers command:\n%s", text)
 	}
+	if !strings.Contains(text, "leave") || !strings.Contains(text, "Remove this machine's local access") {
+		t.Fatalf("expected access help to describe leave command:\n%s", text)
+	}
+	if !strings.Contains(text, "cleanup") || !strings.Contains(text, "Clean up orphaned local identities") {
+		t.Fatalf("expected access help to describe cleanup command:\n%s", text)
+	}
 	if strings.Contains(text, "my status") {
 		t.Fatalf("did not expect access help to describe my status command:\n%s", text)
 	}
@@ -381,6 +388,127 @@ func TestRunAccessCreatePrintsCredentialTables(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected colorized access create output to contain %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestRunAccessLeaveRejectsLastOwner(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "leave", "--assume-yes"}, strings.NewReader(""), &output, &output)
+
+	err := runner.Run()
+	if err == nil {
+		t.Fatal("expected access leave to reject the last owner")
+	}
+	if !strings.Contains(err.Error(), "cannot leave as the last owner device") {
+		t.Fatalf("expected last owner error, got %v", err)
+	}
+	if _, err := store.Open("."); err != nil {
+		t.Fatalf("expected local identity to remain after rejected leave: %v", err)
+	}
+}
+
+func TestRunAccessLeaveDeletesLocalIdentity(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	ownerKeyStore := filepath.Join(root, "keys")
+	secondKeyStore := filepath.Join(root, "second-owner-keys")
+
+	repo, err := store.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerDeviceID := repo.DeviceID()
+	identityPath := repo.KeyPath()
+
+	t.Setenv("GHOSTABLE_KEYSTORE", secondKeyStore)
+	projectRepo, err := store.OpenProject(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDevice, _, err := projectRepo.JoinDevice("second-owner", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GHOSTABLE_KEYSTORE", ownerKeyStore)
+	repo, err = store.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ShareDevice(secondDevice.ID, "all", "owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "leave", "--assume-yes", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	var result store.DeviceLeaveResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("parse leave JSON: %v\n%s", err, output.String())
+	}
+	if !result.Left || !result.Owner || result.DeviceID != ownerDeviceID || result.Identity != identityPath {
+		t.Fatalf("unexpected leave result: %#v", result)
+	}
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("expected local identity file to be removed, got %v", err)
+	}
+	if _, err := store.Open("."); err == nil || !strings.Contains(err.Error(), "no local Ghostable identity") {
+		t.Fatalf("expected local identity to be removed, got %v", err)
+	}
+}
+
+func TestRunAccessCleanupDeletesOrphanedLocalIdentity(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousWd); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := store.Setup(repoRoot, store.SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "default", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityPath := repo.KeyPath()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "access", "cleanup", "--assume-yes", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	var result store.LocalIdentityCleanupResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("parse cleanup JSON: %v\n%s", err, output.String())
+	}
+	if len(result.Removed) != 1 || result.Removed[0].ProjectID != repo.Manifest.ID {
+		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("expected local identity file to be removed, got %v", err)
 	}
 }
 

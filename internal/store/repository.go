@@ -154,6 +154,14 @@ type DeviceRevokeResult struct {
 	Revoked     bool          `json:"revoked"`
 }
 
+type DeviceLeaveResult struct {
+	DeviceID string `json:"deviceId"`
+	Device   string `json:"device"`
+	Identity string `json:"identity"`
+	Owner    bool   `json:"owner"`
+	Left     bool   `json:"left"`
+}
+
 type DeviceDeleteResult struct {
 	DeviceID string `json:"deviceId"`
 	Device   string `json:"device"`
@@ -352,6 +360,9 @@ func (r Repository) JoinDevice(name string, platform string) (domain.DeviceRecor
 	identity.TrustedPolicySigners = trustedPolicySigners(policySigner)
 	identity.TrustedPolicyVersion = policy.Version
 	if err := r.identityStore.Save(identity); err != nil {
+		return domain.DeviceRecord{}, false, err
+	}
+	if err := r.identityStore.RegisterProjectIdentity(identity, r.Manifest.Name, r.Root); err != nil {
 		return domain.DeviceRecord{}, false, err
 	}
 	r.Identity = identity
@@ -741,7 +752,7 @@ func (r Repository) RevokeDevice(deviceID string, env string) (DeviceRevokeResul
 		return DeviceRevokeResult{}, fmt.Errorf("device id is required")
 	}
 	if deviceID == r.DeviceID() {
-		return DeviceRevokeResult{}, fmt.Errorf("cannot revoke the current device; use device leave when local key removal is supported")
+		return DeviceRevokeResult{}, fmt.Errorf("cannot revoke the current device; use device leave to remove this machine's local access")
 	}
 	if env == "" {
 		env = "all"
@@ -844,6 +855,42 @@ func (r Repository) RevokeDevice(deviceID string, env string) (DeviceRevokeResul
 		Removed:     removed,
 		Files:       files,
 		Revoked:     true,
+	}, nil
+}
+
+func (r Repository) LeaveDevice() (DeviceLeaveResult, error) {
+	deviceID := strings.TrimSpace(r.DeviceID())
+	if deviceID == "" {
+		return DeviceLeaveResult{}, fmt.Errorf("this device has no local Ghostable identity")
+	}
+	if r.identityPath == automationCredentialEnvironmentVariable {
+		return DeviceLeaveResult{}, fmt.Errorf("cannot leave using %s; unset it or remove that credential instead", automationCredentialEnvironmentVariable)
+	}
+
+	policy, err := r.readPolicy()
+	if err != nil {
+		return DeviceLeaveResult{}, err
+	}
+	isOwner := contains(policy.Owners, deviceID) && !policyDeviceRevoked(policy, deviceID)
+	if isOwner && activeOwnerCount(policy) <= 1 {
+		return DeviceLeaveResult{}, fmt.Errorf("cannot leave as the last owner device; grant owner access to another device first")
+	}
+
+	deviceName := deviceID
+	if device, err := r.localDeviceRecord(); err == nil {
+		deviceName = deviceGrantName(device, deviceID)
+	}
+	identityPath := r.KeyPath()
+	if err := r.identityStore.Delete(r.Manifest.ID); err != nil {
+		return DeviceLeaveResult{}, err
+	}
+
+	return DeviceLeaveResult{
+		DeviceID: deviceID,
+		Device:   deviceName,
+		Identity: identityPath,
+		Owner:    isOwner,
+		Left:     true,
 	}, nil
 }
 
@@ -1047,6 +1094,16 @@ func policyDeviceIDs(policy domain.Policy, env string) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func activeOwnerCount(policy domain.Policy) int {
+	count := 0
+	for _, deviceID := range policy.Owners {
+		if !policyDeviceRevoked(policy, deviceID) {
+			count++
+		}
+	}
+	return count
 }
 
 func policyRole(policy domain.Policy, env string, deviceID string) string {
