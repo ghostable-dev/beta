@@ -23,27 +23,7 @@ type environmentPullRequest struct {
 }
 
 func (r *Runner) pullEnvironmentFile(request environmentPullRequest) error {
-	repo, err := r.openRepo()
-	if err != nil {
-		return err
-	}
-	selected, err := r.selectEnvironment(repo, request.Environment)
-	if err != nil {
-		return err
-	}
-	if request.File == "" {
-		request.File = envFileDefault(selected)
-	}
-	result, rendered, err := repo.Pull(selected, store.PullOptions{
-		File:      request.File,
-		Only:      request.Only,
-		DryRun:    request.DryRun,
-		Replace:   request.Replace,
-		Backup:    request.Backup,
-		Force:     request.Force,
-		ShowValue: request.ShowValues,
-		SkipEvent: request.SkipEvent,
-	})
+	repo, result, rendered, err := r.writeEnvironmentFile(request)
 	if err != nil {
 		return err
 	}
@@ -67,6 +47,34 @@ func (r *Runner) pullEnvironmentFile(request environmentPullRequest) error {
 		fmt.Fprintf(r.out, "%s %s\n", warn("Backup:"), result.BackupFile)
 	}
 	return nil
+}
+
+func (r *Runner) writeEnvironmentFile(request environmentPullRequest) (store.Repository, store.PullResult, string, error) {
+	repo, err := r.openRepo()
+	if err != nil {
+		return store.Repository{}, store.PullResult{}, "", err
+	}
+	selected, err := r.selectEnvironment(repo, request.Environment)
+	if err != nil {
+		return store.Repository{}, store.PullResult{}, "", err
+	}
+	if request.File == "" {
+		request.File = envFileDefault(selected)
+	}
+	result, rendered, err := repo.Pull(selected, store.PullOptions{
+		File:      request.File,
+		Only:      request.Only,
+		DryRun:    request.DryRun,
+		Replace:   request.Replace,
+		Backup:    request.Backup,
+		Force:     request.Force,
+		ShowValue: request.ShowValues,
+		SkipEvent: request.SkipEvent,
+	})
+	if err != nil {
+		return store.Repository{}, store.PullResult{}, "", err
+	}
+	return repo, result, rendered, nil
 }
 
 func (r *Runner) printDeploySuccess(repo store.Repository, result store.PullResult) {

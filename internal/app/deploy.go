@@ -14,12 +14,12 @@ func (r *Runner) runDeploy(args []string) error {
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "vapor":
+		case "laravel-vapor":
 			return r.runDeployVapor(args[1:])
-		case "forge":
-			return fmt.Errorf("`ghostable deploy forge` is not implemented in the Go client yet")
-		case "cloud", "laravel-cloud":
-			return fmt.Errorf("`ghostable deploy cloud` is not implemented in the Go client yet")
+		case "laravel-forge":
+			return r.runDeployForge(args[1:])
+		case "laravel-cloud":
+			return r.runDeployCloud(args[1:])
 		}
 	}
 	return r.runDeployWrite(args)
@@ -60,9 +60,14 @@ func (r *Runner) runDeployWrite(args []string) error {
 }
 
 func (r *Runner) printDeployHelp() {
-	fmt.Fprintln(r.out, "Usage: ghostable deploy [environment] [options]")
+	fmt.Fprintln(r.out, "Usage: ghostable deploy [target] [environment] [options]")
 	fmt.Fprintln(r.out)
-	fmt.Fprintln(r.out, "Decrypt an environment into a local .env file for deploy scripts.")
+	fmt.Fprintln(r.out, "Decrypt an environment into a local .env file or sync it to a supported deployment provider.")
+	fmt.Fprintln(r.out)
+	fmt.Fprintln(r.out, warn("Targets:"))
+	fmt.Fprintln(r.out, "  laravel-forge    Sync Laravel Forge site environment variables")
+	fmt.Fprintln(r.out, "  laravel-vapor    Sync Laravel Vapor environment variables and Vapor Secrets")
+	fmt.Fprintln(r.out, "  laravel-cloud    Sync Laravel Cloud environment variables")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Options:"))
 	fmt.Fprintln(r.out, "  --env <ENV>       Environment name")

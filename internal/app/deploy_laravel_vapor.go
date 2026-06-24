@@ -40,7 +40,7 @@ func (r *Runner) runDeployVapor(args []string) error {
 		return nil
 	}
 
-	fs := newFlagSet("deploy vapor", r.errOut)
+	fs := newFlagSet("deploy laravel-vapor", r.errOut)
 	env := fs.String("env", "", "Ghostable environment name")
 	vaporEnv := fs.String("vapor-env", "", "Laravel Vapor environment name")
 	dryRun := fs.Bool("dry-run", false, "Show what would sync without invoking Vapor")
@@ -50,7 +50,7 @@ func (r *Runner) runDeployVapor(args []string) error {
 		return err
 	}
 	if len(positionals) > 1 {
-		return fmt.Errorf("usage: ghostable deploy vapor [environment] [options]")
+		return fmt.Errorf("usage: ghostable deploy laravel-vapor [environment] [options]")
 	}
 	if *env == "" && len(positionals) == 1 {
 		*env = positionals[0]
@@ -103,7 +103,7 @@ func (r *Runner) runDeployVapor(args []string) error {
 }
 
 func (r *Runner) printDeployVaporHelp() {
-	fmt.Fprintln(r.out, "Usage: ghostable deploy vapor [environment] [options]")
+	fmt.Fprintln(r.out, "Usage: ghostable deploy laravel-vapor [environment] [options]")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, "Sync decrypted values to Laravel Vapor using Vapor environment variables and Vapor Secrets.")
 	fmt.Fprintln(r.out)
@@ -298,13 +298,13 @@ func writeVaporSecretTempFile(value string) (string, error) {
 func resolveVaporBinary(projectRoot string) (string, error) {
 	path, err := exec.LookPath("vapor")
 	if err != nil {
-		return "", fmt.Errorf("Vapor CLI not found on PATH; install the Laravel Vapor CLI before running `ghostable deploy vapor`")
+		return "", fmt.Errorf("Vapor CLI not found on PATH; install the Laravel Vapor CLI before running `ghostable deploy laravel-vapor`")
 	}
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	if vaporBinaryInsideProject(projectRoot, absolutePath) {
+	if binaryInsideProject(projectRoot, absolutePath) {
 		return "", fmt.Errorf("refusing to run Vapor CLI from project path %s; put a trusted Vapor executable earlier on PATH outside this repository", absolutePath)
 	}
 	info, err := os.Stat(absolutePath)
@@ -317,12 +317,12 @@ func resolveVaporBinary(projectRoot string) (string, error) {
 	return absolutePath, nil
 }
 
-func vaporBinaryInsideProject(projectRoot string, vaporPath string) bool {
+func binaryInsideProject(projectRoot string, binaryPath string) bool {
 	absoluteRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
 		return false
 	}
-	absolutePath, err := filepath.Abs(vaporPath)
+	absolutePath, err := filepath.Abs(binaryPath)
 	if err != nil {
 		return false
 	}

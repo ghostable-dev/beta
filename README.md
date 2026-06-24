@@ -112,19 +112,57 @@ and signed `.ghostable/` records. GitHub Actions workflow references under
 `.env`. It replaces `.env` by default so stale deploy values do not survive
 between runs. Use `--merge` when an existing file should be preserved.
 
+Provider targets use `ghostable deploy <target> [environment] [options]`:
+
+```sh
+ghostable deploy laravel-forge production
+ghostable deploy laravel-vapor production
+ghostable deploy laravel-cloud production
+```
+
 Laravel Vapor deploys can split regular environment variables from values that
 should be stored through Vapor Secrets:
 
 ```sh
 ghostable var vapor-secret --env production --key APP_KEY --enabled
-ghostable deploy vapor production --dry-run
-ghostable deploy vapor production
+ghostable deploy laravel-vapor production --dry-run
+ghostable deploy laravel-vapor production
 ```
 
-`ghostable deploy vapor` requires the `vapor` CLI on `PATH` unless `--dry-run`
-is used. Regular variables are merged into Vapor's `.env.<environment>` file and
-pushed with `vapor env:push`; variables marked as Vapor Secrets are synced with
-Vapor Secrets instead.
+`ghostable deploy laravel-vapor` requires the `vapor` CLI on `PATH` unless
+`--dry-run` is used. Regular variables are merged into Vapor's
+`.env.<environment>` file and pushed with `vapor env:push`; variables marked as
+Vapor Secrets are synced with Vapor Secrets instead.
+
+Laravel Cloud deploys sync Ghostable values to Laravel Cloud environment
+variables using the Laravel Cloud CLI:
+
+```sh
+ghostable deploy laravel-cloud production --dry-run
+ghostable deploy laravel-cloud production --cloud-env production
+```
+
+`ghostable deploy laravel-cloud` requires the `cloud` CLI on `PATH` unless
+`--dry-run` is used. It calls `cloud environment:variables <environment>` with
+`--action=set` for each selected key, so existing Cloud variables with matching
+keys are updated and missing keys are added. The Cloud environment defaults to
+the Ghostable environment name; use `--cloud-env` when Laravel Cloud uses a
+different environment ID or name.
+
+Laravel Forge deploys sync Ghostable values to a Forge site's environment file
+using the Laravel Forge CLI:
+
+```sh
+ghostable deploy laravel-forge production --dry-run --forge-site example.com
+ghostable deploy laravel-forge production --forge-site example.com
+```
+
+`ghostable deploy laravel-forge` requires the `forge` CLI on `PATH` unless
+`--dry-run` is used. It pulls the remote site environment file with
+`forge env:pull`, merges selected Ghostable values into a temporary file, then
+pushes the result with `forge env:push`. Existing Forge variables with matching
+keys are updated and missing keys are added. Pass `--forge-site` with the Forge
+site name that should receive the variables.
 
 Deploy systems can use a scoped automation credential instead of a local device
 identity:
@@ -149,18 +187,13 @@ but before Laravel commands that read `.env`:
 ```sh
 npm ci
 export GHOSTABLE_CI_TOKEN="$(cat "$HOME/.ghostable-ci-token")"
-npx --no-install ghostable deploy production
+ghostable deploy laravel-forge production --forge-site example.com
 npm run build
 $FORGE_PHP artisan migrate --force
 ```
 
-For Laravel Cloud, do not rely on `ghostable deploy` inside Cloud deploy
-commands to persist a generated `.env` file. Laravel Cloud deploy commands run
-on Cloud infrastructure just before a deployment goes live, but filesystem
-changes made there are not persisted to the application. Until Ghostable has a
-native Laravel Cloud environment sync command, use Ghostable as the source of
-truth locally and copy/sync the values into Laravel Cloud's environment variable
-settings.
+For Laravel Cloud, run `ghostable deploy laravel-cloud` before starting a Cloud
+deployment when changed variables should be available to the next deploy.
 
 ## Secret Scanning
 

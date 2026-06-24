@@ -27,7 +27,7 @@ func TestRunDeployVaporDryRunUsesVaporSecretMetadata(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "deploy", "vapor", "production", "--dry-run"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "deploy", "laravel-vapor", "production", "--dry-run"}, strings.NewReader(""), &output, &output)
 	if err := runner.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRunDeployVaporInvokesVaporCLI(t *testing.T) {
 	t.Setenv("VAPOR_LOG", logPath)
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "deploy", "vapor", "production", "--vapor-env", "staging"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "deploy", "laravel-vapor", "production", "--vapor-env", "staging"}, strings.NewReader(""), &output, &output)
 	if err := runner.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestRunDeployVaporRejectsProjectLocalVaporCLI(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "deploy", "vapor", "production"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "deploy", "laravel-vapor", "production"}, strings.NewReader(""), &output, &output)
 	if err := runner.Run(); err == nil || !strings.Contains(err.Error(), "refusing to run Vapor CLI from project path") {
 		t.Fatalf("expected project-local Vapor CLI to be rejected, got %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRunDeployVaporDoesNotUseRepoLocalEnvironmentFile(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "deploy", "vapor", "production", "--vapor-env", "staging"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "deploy", "laravel-vapor", "production", "--vapor-env", "staging"}, strings.NewReader(""), &output, &output)
 	if err := runner.Run(); err != nil {
 		t.Fatalf("expected Vapor deploy to avoid repo-local symlinked environment file, got %v", err)
 	}
