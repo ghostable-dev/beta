@@ -110,6 +110,141 @@ func TestRepositoryEncryptsAndPullsVariables(t *testing.T) {
 	}
 }
 
+func TestRepositoryLeaveDeviceRejectsLastOwner(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.LeaveDevice(); err == nil {
+		t.Fatal("expected last owner leave to be rejected")
+	} else if !strings.Contains(err.Error(), "cannot leave as the last owner device") {
+		t.Fatalf("expected last owner error, got %v", err)
+	}
+	if _, err := repo.identityStore.Load(repo.Manifest.ID); err != nil {
+		t.Fatalf("expected local identity to remain after rejected leave: %v", err)
+	}
+}
+
+func TestRepositoryLeaveDeviceDeletesLocalIdentity(t *testing.T) {
+	root := t.TempDir()
+	ownerKeyStore := filepath.Join(root, "owner-keys")
+	secondKeyStore := filepath.Join(root, "second-keys")
+	t.Setenv("GHOSTABLE_KEYSTORE", ownerKeyStore)
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "owner-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerDeviceID := repo.DeviceID()
+	identityPath := repo.KeyPath()
+
+	t.Setenv("GHOSTABLE_KEYSTORE", secondKeyStore)
+	projectRepo, err := OpenProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDevice, _, err := projectRepo.JoinDevice("second-owner", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GHOSTABLE_KEYSTORE", ownerKeyStore)
+	repo, err = Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ShareDevice(secondDevice.ID, "all", "owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := repo.LeaveDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Left || !result.Owner || result.DeviceID != ownerDeviceID || result.Device != "owner-device" || result.Identity != identityPath {
+		t.Fatalf("unexpected leave result: %#v", result)
+	}
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("expected local identity file to be removed, got %v", err)
+	}
+	if _, err := Open(root); err == nil || !strings.Contains(err.Error(), "no local Ghostable identity") {
+		t.Fatalf("expected owner identity to be removed, got %v", err)
+	}
+
+	t.Setenv("GHOSTABLE_KEYSTORE", secondKeyStore)
+	secondRepo, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRepo.DeviceID() != secondDevice.ID {
+		t.Fatalf("expected second owner identity to remain, got %s", secondRepo.DeviceID())
+	}
+}
+
+func TestCleanupOrphanedLocalIdentitiesDeletesMissingRepoCredentials(t *testing.T) {
+	root := t.TempDir()
+	repoRoot := filepath.Join(root, "repo")
+	keyStore := filepath.Join(root, "keys")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GHOSTABLE_KEYSTORE", keyStore)
+
+	repo, _, err := Setup(repoRoot, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityPath := repo.KeyPath()
+	if _, err := os.Stat(identityPath); err != nil {
+		t.Fatalf("expected local identity to exist: %v", err)
+	}
+
+	preview, err := CleanupOrphanedLocalIdentities(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Orphaned) != 0 {
+		t.Fatalf("expected active repo identity to be kept, got %#v", preview)
+	}
+
+	if err := os.RemoveAll(repoRoot); err != nil {
+		t.Fatal(err)
+	}
+	result, err := CleanupOrphanedLocalIdentities(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Removed) != 1 || result.Removed[0].ProjectID != repo.Manifest.ID || result.Removed[0].Reason != "repo path does not exist" {
+		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("expected local identity file to be removed, got %v", err)
+	}
+	entries, err := repo.identityStore.ListProjectIdentities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected registry to be empty, got %#v", entries)
+	}
+}
+
 func TestRepositoryRejectsTamperedValueSignature(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
