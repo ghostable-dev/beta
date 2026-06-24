@@ -138,7 +138,6 @@ func TestRunAgentCapabilitiesListsSafeCommands(t *testing.T) {
 		"var push",
 		"var promote",
 		"var delete",
-		"var vapor-secret",
 		"schema rule",
 		"schema file",
 		"schema key",

@@ -1153,15 +1153,9 @@ func variableInputsFromVariables(variables map[string]domain.Variable) map[strin
 	values := make(map[string]store.VariablePutInput, len(variables))
 	for key, variable := range variables {
 		commented := variable.Commented
-		var vaporSecret *bool
-		if variable.VaporSecret {
-			enabled := true
-			vaporSecret = &enabled
-		}
 		values[key] = store.VariablePutInput{
-			Value:       variable.Value,
-			Commented:   &commented,
-			VaporSecret: vaporSecret,
+			Value:     variable.Value,
+			Commented: &commented,
 		}
 	}
 	return values

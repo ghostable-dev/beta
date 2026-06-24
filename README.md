@@ -88,8 +88,8 @@ Automation and agents should pass flags and prefer `--json`.
 - `validate` checks environment values against schema rules.
 - `review` checks whether code changes and encrypted ENV metadata agree.
 - `deploy [environment]` writes decrypted values to `.env` for deploy scripts.
-- `var push|pull|promote|delete|history|context|vapor-secret` manages a single
-  variable.
+- `var push|pull|promote|delete|history|context|annotation`
+  manages a single variable and its key metadata.
 - `schema file|rule|key` manages local validation schema files.
 - `device create|join|list|status|approvers|share|grants|revoke` manages local device
   records, scoped automation devices, and policy grants.
@@ -102,8 +102,8 @@ Automation and agents should pass flags and prefer `--json`.
 `ghostable review` scans changed lines for common ENV access patterns in
 PHP/Laravel, JavaScript/TypeScript/Node, Go, Python, Ruby/Rails, Java, C#,
 Rust, Swift, and shell/deploy scripts. It compares those references with
-encrypted Ghostable values, schema files, `.env.example`, Vapor Secret metadata,
-and signed `.ghostable/` records. GitHub Actions workflow references under
+encrypted Ghostable values, schema files, `.env.example`, and signed
+`.ghostable/` records. GitHub Actions workflow references under
 `.github/` are ignored because those often come from GitHub Secrets or Vars.
 
 ## Deploy Scripts
@@ -120,19 +120,16 @@ ghostable deploy laravel-vapor production
 ghostable deploy laravel-cloud production
 ```
 
-Laravel Vapor deploys can split regular environment variables from values that
-should be stored through Vapor Secrets:
+Laravel Vapor deploys sync Ghostable values to Vapor environment variables:
 
 ```sh
-ghostable var vapor-secret --env production --key APP_KEY --enabled
 ghostable deploy laravel-vapor production --dry-run
 ghostable deploy laravel-vapor production
 ```
 
 `ghostable deploy laravel-vapor` requires the `vapor` CLI on `PATH` unless
-`--dry-run` is used. Regular variables are merged into Vapor's
-`.env.<environment>` file and pushed with `vapor env:push`; variables marked as
-Vapor Secrets are synced with Vapor Secrets instead.
+`--dry-run` is used. Variables are merged into Vapor's temporary
+`.env.<environment>` file and pushed with `vapor env:push`.
 
 Laravel Cloud deploys sync Ghostable values to Laravel Cloud environment
 variables using the Laravel Cloud CLI:
@@ -233,6 +230,10 @@ numbers. Generated layouts use gaps such as `1000`, `2000`, and `3000` so a
 new key can usually be added without rewriting every existing key metadata
 file.
 
+Key annotations are signed plaintext key metadata with explicit `string`,
+`number`, or `bool` values. They are intended for non-secret labels that future
+custom rules or actions may read.
+
 Value records may include a signed plaintext `change.reason` so reviewers can
 understand why an encrypted value changed without exposing the secret.
 
@@ -262,8 +263,9 @@ are created with `0600` permissions.
 - Environment keys are wrapped by a random DEK; that DEK is shared through
   per-device X25519 + HKDF-SHA256 + XChaCha encrypted grants.
 - Device records, policy records, access grants, access envelopes, activity
-  events, and value payloads are signed with Ed25519.
+  events, key metadata, and value payloads are signed with Ed25519.
 - Secret values are never printed unless `--show-values` is provided.
+- Key annotations are not encrypted and should not contain secrets.
 - `var push` without `--file` uses a no-echo terminal prompt on Unix systems.
 - `.ghostable/environments/**/values/**` and
   `.ghostable/environments/**/keys/**` are ignored by the scanner to avoid

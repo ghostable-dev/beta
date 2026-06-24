@@ -23,6 +23,9 @@ const (
 	GhostableOrgScope    = "ghostable"
 	KeyStatusActive      = "active"
 	KeyStatusCommented   = "commented"
+	KeyAnnotationString  = "string"
+	KeyAnnotationNumber  = "number"
+	KeyAnnotationBool    = "bool"
 )
 
 type ProjectManifest struct {
@@ -144,24 +147,29 @@ type EnvironmentPolicy struct {
 }
 
 type EnvironmentKeyMetadataRecord struct {
-	Schema            string             `json:"schema"`
-	ProjectID         string             `json:"projectId"`
-	Environment       string             `json:"environment"`
-	Key               string             `json:"key"`
-	Status            string             `json:"status"`
-	Position          int64              `json:"position,omitempty"`
-	Deploy            *KeyDeployMetadata `json:"deploy,omitempty"`
-	EncryptedNote     *EncryptedPayload  `json:"encryptedNote,omitempty"`
-	CreatedByDeviceID string             `json:"createdByDeviceId,omitempty"`
-	CreatedAt         string             `json:"createdAt,omitempty"`
-	UpdatedByDeviceID string             `json:"updatedByDeviceId,omitempty"`
-	UpdatedAt         string             `json:"updatedAt,omitempty"`
-	SignerDeviceID    string             `json:"device_id,omitempty"`
-	ClientSig         string             `json:"client_sig,omitempty"`
+	Schema            string            `json:"schema"`
+	ProjectID         string            `json:"projectId"`
+	Environment       string            `json:"environment"`
+	Key               string            `json:"key"`
+	Status            string            `json:"status"`
+	Position          int64             `json:"position,omitempty"`
+	Annotations       KeyAnnotations    `json:"annotations,omitempty"`
+	EncryptedNote     *EncryptedPayload `json:"encryptedNote,omitempty"`
+	CreatedByDeviceID string            `json:"createdByDeviceId,omitempty"`
+	CreatedAt         string            `json:"createdAt,omitempty"`
+	UpdatedByDeviceID string            `json:"updatedByDeviceId,omitempty"`
+	UpdatedAt         string            `json:"updatedAt,omitempty"`
+	SignerDeviceID    string            `json:"device_id,omitempty"`
+	ClientSig         string            `json:"client_sig,omitempty"`
 }
 
-type KeyDeployMetadata struct {
-	LaravelVaporSecret *bool `json:"laravelVaporSecret,omitempty"`
+type KeyAnnotations map[string]KeyAnnotationValue
+
+type KeyAnnotationValue struct {
+	Type   string   `json:"type"`
+	String *string  `json:"string,omitempty"`
+	Number *float64 `json:"number,omitempty"`
+	Bool   *bool    `json:"bool,omitempty"`
 }
 
 type EncryptedPayload struct {
@@ -273,14 +281,14 @@ type LegacyValueRecord struct {
 }
 
 type Variable struct {
-	Key         string `json:"key"`
-	Value       string `json:"value,omitempty"`
-	HasValue    bool   `json:"hasValue"`
-	Sensitive   bool   `json:"sensitive"`
-	Commented   bool   `json:"commented,omitempty"`
-	VaporSecret bool   `json:"vaporSecret,omitempty"`
-	Note        string `json:"note,omitempty"`
-	UpdatedAt   string `json:"updatedAt,omitempty"`
+	Key         string         `json:"key"`
+	Value       string         `json:"value,omitempty"`
+	HasValue    bool           `json:"hasValue"`
+	Sensitive   bool           `json:"sensitive"`
+	Commented   bool           `json:"commented,omitempty"`
+	Note        string         `json:"note,omitempty"`
+	UpdatedAt   string         `json:"updatedAt,omitempty"`
+	Annotations KeyAnnotations `json:"annotations,omitempty"`
 }
 
 type Event struct {

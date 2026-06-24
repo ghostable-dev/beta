@@ -66,7 +66,7 @@ func (r *Runner) printDeployHelp() {
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Targets:"))
 	fmt.Fprintln(r.out, "  laravel-forge    Sync Laravel Forge site environment variables")
-	fmt.Fprintln(r.out, "  laravel-vapor    Sync Laravel Vapor environment variables and Vapor Secrets")
+	fmt.Fprintln(r.out, "  laravel-vapor    Sync Laravel Vapor environment variables")
 	fmt.Fprintln(r.out, "  laravel-cloud    Sync Laravel Cloud environment variables")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Options:"))

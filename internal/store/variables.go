@@ -21,9 +21,8 @@ func (r Repository) PutVariables(env string, values map[string]string, options P
 }
 
 type VariablePutInput struct {
-	Value       string
-	Commented   *bool
-	VaporSecret *bool
+	Value     string
+	Commented *bool
 }
 
 func (r Repository) PutVariablesWithMetadata(env string, inputs map[string]VariablePutInput, options PutOptions) (PushResult, error) {
@@ -77,14 +76,9 @@ func (r Repository) writeIncomingVariables(env string, incoming map[string]Varia
 		if input.Commented != nil {
 			commented = *input.Commented
 		}
-		vaporSecret := existing.VaporSecret
-		if input.VaporSecret != nil {
-			vaporSecret = *input.VaporSecret
-		}
 		valueChanged := !exists || existing.Value != input.Value
 		commentedChanged := exists && existing.Commented != commented
-		vaporSecretChanged := exists && input.VaporSecret != nil && existing.VaporSecret != vaporSecret
-		metadataChanged := commentedChanged || vaporSecretChanged
+		metadataChanged := commentedChanged
 
 		result.addChangedVariable(key, exists, valueChanged || metadataChanged)
 		if exists && !valueChanged && !metadataChanged {
@@ -97,9 +91,6 @@ func (r Repository) writeIncomingVariables(env string, incoming map[string]Varia
 			}
 			if err := r.updateKeyMetadata(env, key, func(record *domain.EnvironmentKeyMetadataRecord) error {
 				record.Status = status
-				if input.VaporSecret != nil {
-					setKeyMetadataLaravelVaporSecret(record, vaporSecret)
-				}
 				return nil
 			}); err != nil {
 				return err
@@ -113,7 +104,6 @@ func (r Repository) writeIncomingVariables(env string, incoming map[string]Varia
 			Existing:    exists,
 			Reason:      reason,
 			Commented:   commented,
-			VaporSecret: input.VaporSecret,
 		}); err != nil {
 			return err
 		}
@@ -196,9 +186,9 @@ func (r Repository) ReadVariables(env string) (map[string]domain.Variable, error
 			HasValue:    true,
 			Sensitive:   record.Schema == domain.ValueSchema || record.Sensitive,
 			Commented:   metadata.Status == domain.KeyStatusCommented,
-			VaporSecret: keyMetadataLaravelVaporSecret(metadata),
 			Note:        note,
 			UpdatedAt:   record.UpdatedAt,
+			Annotations: cloneKeyAnnotations(metadata.Annotations),
 		}
 	}
 
@@ -206,15 +196,15 @@ func (r Repository) ReadVariables(env string) (map[string]domain.Variable, error
 }
 
 type VariableMetadata struct {
-	Environment       string `json:"environment"`
-	Key               string `json:"key"`
-	Version           int    `json:"version"`
-	UpdatedAt         string `json:"updatedAt,omitempty"`
-	UpdatedByDeviceID string `json:"updatedByDeviceId,omitempty"`
-	VaporSecret       bool   `json:"vaporSecret,omitempty"`
-	Commented         bool   `json:"commented,omitempty"`
-	ValidSignature    bool   `json:"validSignature"`
-	SignatureError    string `json:"signatureError,omitempty"`
+	Environment       string                `json:"environment"`
+	Key               string                `json:"key"`
+	Version           int                   `json:"version"`
+	UpdatedAt         string                `json:"updatedAt,omitempty"`
+	UpdatedByDeviceID string                `json:"updatedByDeviceId,omitempty"`
+	Commented         bool                  `json:"commented,omitempty"`
+	ValidSignature    bool                  `json:"validSignature"`
+	SignatureError    string                `json:"signatureError,omitempty"`
+	Annotations       domain.KeyAnnotations `json:"annotations,omitempty"`
 }
 
 func (r Repository) ReadVariableMetadata(env string) ([]VariableMetadata, error) {
@@ -249,9 +239,9 @@ func (r Repository) ReadVariableMetadata(env string) ([]VariableMetadata, error)
 			Version:           record.Version,
 			UpdatedAt:         record.UpdatedAt,
 			UpdatedByDeviceID: record.UpdatedByDeviceID,
-			VaporSecret:       ok && keyMetadataLaravelVaporSecret(keyRecord),
 			Commented:         ok && keyRecord.Status == domain.KeyStatusCommented,
 			ValidSignature:    signatureErr == nil,
+			Annotations:       cloneKeyAnnotations(keyRecord.Annotations),
 		}
 		if signatureErr != nil {
 			metadata.SignatureError = signatureErr.Error()
@@ -312,9 +302,8 @@ func (r Repository) GetVariable(env string, key string) (domain.Variable, bool, 
 }
 
 type VariableWriteOptions struct {
-	Reason      string
-	Commented   *bool
-	VaporSecret *bool
+	Reason    string
+	Commented *bool
 }
 
 type writeVariableWithMetadataInput struct {
@@ -324,7 +313,6 @@ type writeVariableWithMetadataInput struct {
 	Existing    bool
 	Reason      string
 	Commented   bool
-	VaporSecret *bool
 }
 
 func (r Repository) writeVariableWithMetadata(input writeVariableWithMetadataInput) error {
@@ -344,9 +332,6 @@ func (r Repository) writeVariableWithMetadata(input writeVariableWithMetadataInp
 	}
 	return r.updateKeyMetadata(input.Environment, input.Key, func(record *domain.EnvironmentKeyMetadataRecord) error {
 		record.Status = status
-		if input.VaporSecret != nil {
-			setKeyMetadataLaravelVaporSecret(record, *input.VaporSecret)
-		}
 		return nil
 	})
 }
@@ -380,7 +365,6 @@ func (r Repository) SetVariableWithOptions(env string, key string, value string,
 		Existing:    exists,
 		Reason:      options.Reason,
 		Commented:   commented,
-		VaporSecret: options.VaporSecret,
 	}); err != nil {
 		return err
 	}
@@ -396,36 +380,6 @@ func (r Repository) SetVariableCommented(env string, key string, value string, c
 		Reason:    reason,
 		Commented: &commented,
 	})
-}
-
-func (r Repository) SetVariableVaporSecret(env string, key string, vaporSecret bool, reason string) error {
-	_, exists, err := r.GetVariable(env, key)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("variable %q was not found in %s", key, env)
-	}
-	if err := r.updateKeyMetadata(env, key, func(record *domain.EnvironmentKeyMetadataRecord) error {
-		setKeyMetadataLaravelVaporSecret(record, vaporSecret)
-		return nil
-	}); err != nil {
-		return err
-	}
-	return r.recordEvent("variable.metadata.updated", env, key, map[string]interface{}{"reason": reason, "vaporSecret": vaporSecret})
-}
-
-func keyMetadataLaravelVaporSecret(record domain.EnvironmentKeyMetadataRecord) bool {
-	return record.Deploy != nil &&
-		record.Deploy.LaravelVaporSecret != nil &&
-		*record.Deploy.LaravelVaporSecret
-}
-
-func setKeyMetadataLaravelVaporSecret(record *domain.EnvironmentKeyMetadataRecord, vaporSecret bool) {
-	if record.Deploy == nil {
-		record.Deploy = &domain.KeyDeployMetadata{}
-	}
-	record.Deploy.LaravelVaporSecret = &vaporSecret
 }
 
 func (r Repository) SetVariableNote(env string, key string, note string) error {

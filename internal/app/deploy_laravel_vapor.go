@@ -27,11 +27,9 @@ type vaporDeployPlan struct {
 	DryRun           bool              `json:"dryRun"`
 	Synced           bool              `json:"synced"`
 	EnvVars          []string          `json:"envVars"`
-	VaporSecrets     []string          `json:"vaporSecrets"`
 	Device           string            `json:"device"`
 	Source           string            `json:"source,omitempty"`
 	Variables        map[string]string `json:"-"`
-	Secrets          map[string]string `json:"-"`
 }
 
 func (r *Runner) runDeployVapor(args []string) error {
@@ -105,7 +103,7 @@ func (r *Runner) runDeployVapor(args []string) error {
 func (r *Runner) printDeployVaporHelp() {
 	fmt.Fprintln(r.out, "Usage: ghostable deploy laravel-vapor [environment] [options]")
 	fmt.Fprintln(r.out)
-	fmt.Fprintln(r.out, "Sync decrypted values to Laravel Vapor using Vapor environment variables and Vapor Secrets.")
+	fmt.Fprintln(r.out, "Sync decrypted values to Laravel Vapor environment variables.")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Options:"))
 	fmt.Fprintln(r.out, "  --env <ENV>         Ghostable environment name")
@@ -126,16 +124,10 @@ func buildVaporDeployPlan(repo store.Repository, env string, vaporEnv string) (v
 		Device:           deployIdentityDisplay(repo),
 		Source:           strings.TrimSpace(deployIdentitySource(repo)),
 		Variables:        map[string]string{},
-		Secrets:          map[string]string{},
 	}
 
 	for _, key := range vaporVariableKeys(variables) {
 		variable := variables[key]
-		if variable.VaporSecret {
-			plan.Secrets[key] = variable.Value
-			plan.VaporSecrets = append(plan.VaporSecrets, key)
-			continue
-		}
 		plan.Variables[key] = variable.Value
 		plan.EnvVars = append(plan.EnvVars, key)
 	}
@@ -146,11 +138,6 @@ func buildVaporDeployPlan(repo store.Repository, env string, vaporEnv string) (v
 func syncVaporDeployPlan(plan vaporDeployPlan, vaporPath string) error {
 	if len(plan.Variables) > 0 {
 		if err := syncVaporEnvironmentVariables(vaporPath, plan.VaporEnvironment, plan.Variables, plan.EnvVars); err != nil {
-			return err
-		}
-	}
-	if len(plan.Secrets) > 0 {
-		if err := syncVaporSecrets(vaporPath, plan.VaporEnvironment, plan.Secrets, plan.VaporSecrets); err != nil {
 			return err
 		}
 	}
@@ -257,44 +244,6 @@ func removeVaporEnvironmentFile(path string) error {
 	return nil
 }
 
-func syncVaporSecrets(vaporPath string, vaporEnv string, secrets map[string]string, order []string) error {
-	for _, key := range order {
-		tempFile, err := writeVaporSecretTempFile(secrets[key])
-		if err != nil {
-			return err
-		}
-		err = runVaporCommand(vaporPath, "sync Vapor Secret "+key, "secret", vaporEnv, "--name="+key, "--file="+tempFile)
-		_ = os.Remove(tempFile)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeVaporSecretTempFile(value string) (string, error) {
-	file, err := os.CreateTemp("", "ghostable-vapor-secret-*")
-	if err != nil {
-		return "", err
-	}
-	path := file.Name()
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", err
-	}
-	if _, err := file.WriteString(value); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", err
-	}
-	return path, nil
-}
-
 func resolveVaporBinary(projectRoot string) (string, error) {
 	path, err := exec.LookPath("vapor")
 	if err != nil {
@@ -378,7 +327,6 @@ func printVaporDeployDetails(r *Runner, plan vaporDeployPlan) {
 	printDeployDetail(r.out, "Environment", plan.Environment)
 	printDeployDetail(r.out, "Vapor environment", plan.VaporEnvironment)
 	printDeployDetail(r.out, "Env vars", fmt.Sprintf("%d", len(plan.EnvVars)))
-	printDeployDetail(r.out, "Vapor secrets", fmt.Sprintf("%d", len(plan.VaporSecrets)))
 	printDeployDetail(r.out, "Device", plan.Device)
 	if plan.Source != "" {
 		printDeployDetail(r.out, "Source", plan.Source)

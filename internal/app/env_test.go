@@ -757,11 +757,9 @@ func TestRunEnvCreateFromEnvCopiesKeyMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	commented := true
-	vaporSecret := true
 	if err := repo.SetVariableWithOptions("default", "APP_KEY", "secret", store.VariableWriteOptions{
-		Reason:      "test",
-		Commented:   &commented,
-		VaporSecret: &vaporSecret,
+		Reason:    "test",
+		Commented: &commented,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -780,7 +778,7 @@ func TestRunEnvCreateFromEnvCopiesKeyMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exists || variable.Value != "secret" || !variable.Commented || !variable.VaporSecret {
+	if !exists || variable.Value != "secret" || !variable.Commented {
 		t.Fatalf("expected value and key metadata to be copied, got exists=%v variable=%#v", exists, variable)
 	}
 }

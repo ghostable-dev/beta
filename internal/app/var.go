@@ -19,7 +19,7 @@ var variableCommandOptions = []commandOption{
 	{Label: "delete", Description: "Remove one variable"},
 	{Label: "history", Description: "Show change history"},
 	{Label: "context", Description: "View or update the encrypted note"},
-	{Label: "vapor-secret", Description: "Mark a variable for Vapor Secrets"},
+	{Label: "annotation", Description: "Manage typed key annotations"},
 }
 
 var variablePromotionModeOptions = []commandOption{
@@ -57,8 +57,8 @@ func (r *Runner) runVar(args []string) error {
 		return r.runEnvHistory(args[1:])
 	case "context":
 		return r.runVarContext(args[1:])
-	case "vapor-secret":
-		return r.runVarVaporSecret(args[1:])
+	case "annotation", "annotations", "annotate":
+		return r.runVarAnnotation(args[1:])
 	case "rollback":
 		return fmt.Errorf("variable rollback is not implemented in the Go client yet; use git history to recover the value file or restore from backup")
 	default:
@@ -79,14 +79,8 @@ func (r *Runner) runVarPush(args []string) error {
 	key := fs.String("key", "", "Variable name")
 	file := fs.String("file", "", "Path to .env file")
 	reason := fs.String("reason", "", "Reason stored in signed value changes and local events")
-	vaporSecret := fs.Bool("vapor-secret", false, "Mark this variable as a Laravel Vapor Secret")
-	noVaporSecret := fs.Bool("no-vapor-secret", false, "Unmark this variable as a Laravel Vapor Secret")
 	jsonOut := fs.Bool("json", false, "Print mutation result as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("vapor-secret", "no-vapor-secret", "json")); err != nil {
-		return err
-	}
-	vaporSecretOverride, err := variableVaporSecretOverride(*vaporSecret, *noVaporSecret)
-	if err != nil {
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
 		return err
 	}
 	repo, err := r.openRepo()
@@ -107,7 +101,6 @@ func (r *Runner) runVarPush(args []string) error {
 			file:                 pushFile,
 			providedKey:          *key,
 			reason:               *reason,
-			vaporSecretOverride:  vaporSecretOverride,
 			jsonOut:              *jsonOut,
 			fallbackOnMissingKey: inferredFile,
 		})
@@ -142,15 +135,11 @@ func (r *Runner) runVarPush(args []string) error {
 	}
 
 	if err := repo.SetVariableWithOptions(selected, variableKey, value, store.VariableWriteOptions{
-		Reason:      changeReason,
-		VaporSecret: vaporSecretOverride,
+		Reason: changeReason,
 	}); err != nil {
 		return err
 	}
 	payload := map[string]interface{}{"environment": selected, "key": variableKey, "saved": true}
-	if vaporSecretOverride != nil {
-		payload["vaporSecret"] = *vaporSecretOverride
-	}
 	if *jsonOut {
 		return printJSON(r.out, payload)
 	}
@@ -164,7 +153,6 @@ type varPushFileInput struct {
 	file                 string
 	providedKey          string
 	reason               string
-	vaporSecretOverride  *bool
 	jsonOut              bool
 	fallbackOnMissingKey bool
 }
@@ -245,75 +233,17 @@ func (r *Runner) tryVarPushFromFile(input varPushFileInput) (varPushFileResult, 
 		return varPushFileResult{}, err
 	}
 	if err := input.repo.SetVariableWithOptions(input.environment, variableKey, entry.Value, store.VariableWriteOptions{
-		Reason:      changeReason,
-		Commented:   &entry.Disabled,
-		VaporSecret: input.vaporSecretOverride,
+		Reason:    changeReason,
+		Commented: &entry.Disabled,
 	}); err != nil {
 		return varPushFileResult{}, err
 	}
 	payload := map[string]interface{}{"environment": input.environment, "key": variableKey, "saved": true, "commented": entry.Disabled}
-	if input.vaporSecretOverride != nil {
-		payload["vaporSecret"] = *input.vaporSecretOverride
-	}
 	if input.jsonOut {
 		return varPushFileResult{handled: true}, printJSON(r.out, payload)
 	}
 	fmt.Fprintln(r.out, success(fmt.Sprintf("Saved %s in %s.", variableKey, input.environment)))
 	return varPushFileResult{handled: true}, r.maybePromptGenerateExample(input.repo, !existed, false, input.jsonOut)
-}
-
-func (r *Runner) runVarVaporSecret(args []string) error {
-	fs := newFlagSet("var vapor-secret", r.errOut)
-	env := fs.String("env", "", "Environment name")
-	key := fs.String("key", "", "Variable name")
-	enabled := fs.Bool("enabled", true, "Whether this variable should be stored as a Vapor Secret")
-	reason := fs.String("reason", "", "Reason stored in signed local events")
-	jsonOut := fs.Bool("json", false, "Print mutation result as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("enabled", "json")); err != nil {
-		return err
-	}
-	repo, err := r.openRepo()
-	if err != nil {
-		return err
-	}
-	selected, err := r.selectEnvironment(repo, *env)
-	if err != nil {
-		return err
-	}
-	variableKey, err := r.selectVariableKey(repo, selected, *key)
-	if err != nil {
-		return err
-	}
-	if err := repo.SetVariableVaporSecret(selected, variableKey, *enabled, *reason); err != nil {
-		return err
-	}
-	payload := map[string]interface{}{"environment": selected, "key": variableKey, "vaporSecret": *enabled}
-	if *jsonOut {
-		return printJSON(r.out, payload)
-	}
-	fmt.Fprintln(r.out, success(fmt.Sprintf("%s Vapor Secret is %s.", variableKey, enabledLabel(*enabled))))
-	return nil
-}
-
-func variableVaporSecretOverride(vaporSecret bool, noVaporSecret bool) (*bool, error) {
-	if vaporSecret && noVaporSecret {
-		return nil, fmt.Errorf("pass either --vapor-secret or --no-vapor-secret, not both")
-	}
-	if vaporSecret {
-		return &vaporSecret, nil
-	}
-	if noVaporSecret {
-		enabled := false
-		return &enabled, nil
-	}
-	return nil, nil
-}
-
-func enabledLabel(enabled bool) string {
-	if enabled {
-		return "enabled"
-	}
-	return "disabled"
 }
 
 func (r *Runner) runVarPull(args []string) error {
@@ -434,11 +364,6 @@ func (r *Runner) runVarPromote(args []string) error {
 	}
 
 	commented := variable.Commented
-	var vaporSecret *bool
-	if variable.VaporSecret {
-		enabled := true
-		vaporSecret = &enabled
-	}
 	targetVariable, targetExists, err := repo.GetVariable(target, variableKey)
 	if err != nil {
 		return err
@@ -449,9 +374,8 @@ func (r *Runner) runVarPromote(args []string) error {
 		return err
 	}
 	if err := repo.SetVariableWithOptions(target, variableKey, variable.Value, store.VariableWriteOptions{
-		Reason:      changeReason,
-		Commented:   &commented,
-		VaporSecret: vaporSecret,
+		Reason:    changeReason,
+		Commented: &commented,
 	}); err != nil {
 		return err
 	}

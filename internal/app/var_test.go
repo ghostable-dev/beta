@@ -54,6 +54,9 @@ func TestVarHelpShowsPromoteAndHidesCopy(t *testing.T) {
 	if !strings.Contains(text, "promote") {
 		t.Fatalf("expected var help to show promote:\n%s", text)
 	}
+	if !strings.Contains(text, "annotation") {
+		t.Fatalf("expected var help to show annotation:\n%s", text)
+	}
 	if strings.Contains(text, "copy") {
 		t.Fatalf("did not expect var help to show copy:\n%s", text)
 	}
@@ -420,37 +423,7 @@ func TestRunVarPushStoresCommentedFileVariable(t *testing.T) {
 	}
 }
 
-func TestRunVarPushStoresVaporSecretMetadata(t *testing.T) {
-	root := setupRepoForVarCommandTest(t)
-	envFile := filepath.Join(t.TempDir(), ".env.seed")
-	if err := os.WriteFile(envFile, []byte("ALPHA=one\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "var", "push", "--env", "default", "--key", "ALPHA", "--file", envFile, "--vapor-secret", "--json"}, strings.NewReader(""), &output, &output)
-
-	if err := runner.runVarPush(runner.args[3:]); err != nil {
-		t.Fatal(err)
-	}
-
-	repo, err := store.Open(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	variable, exists, err := repo.GetVariable("default", "ALPHA")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists || !variable.VaporSecret {
-		t.Fatalf("expected variable to be marked as a Vapor Secret, got exists=%v variable=%#v", exists, variable)
-	}
-	if !strings.Contains(output.String(), `"vaporSecret": true`) {
-		t.Fatalf("expected JSON payload to include Vapor Secret state, got:\n%s", output.String())
-	}
-}
-
-func TestRunVarVaporSecretTogglesMetadata(t *testing.T) {
+func TestRunVarAnnotationSetListAndRemove(t *testing.T) {
 	root := setupRepoForVarCommandTest(t)
 	repo, err := store.Open(root)
 	if err != nil {
@@ -459,25 +432,132 @@ func TestRunVarVaporSecretTogglesMetadata(t *testing.T) {
 	if err := repo.SetVariable("default", "ALPHA", "one", "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SetVariableVaporSecret("default", "ALPHA", true, "test"); err != nil {
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "annotation", "set", "--env", "default", "--key", "ALPHA", "--name", "Owner", "--string", "platform"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "owner=\"platform\"") {
+		t.Fatalf("expected set output, got:\n%s", output.String())
+	}
+
+	result, err := repo.ReadKeyAnnotations("default", "ALPHA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Annotations) != 1 || result.Annotations[0].Name != "owner" {
+		t.Fatalf("expected owner annotation, got %#v", result.Annotations)
+	}
+
+	output.Reset()
+	runner = NewRunner([]string{"ghostable", "var", "annotation", "list", "--env", "default", "--key", "ALPHA"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "owner=\"platform\"") {
+		t.Fatalf("expected list output, got:\n%s", output.String())
+	}
+
+	output.Reset()
+	runner = NewRunner([]string{"ghostable", "var", "annotation", "remove", "--env", "default", "--key", "ALPHA", "--name", "owner"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Removed") || !strings.Contains(output.String(), "owner") {
+		t.Fatalf("expected remove output, got:\n%s", output.String())
+	}
+
+	result, err = repo.ReadKeyAnnotations("default", "ALPHA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Annotations) != 0 {
+		t.Fatalf("expected annotation to be removed, got %#v", result.Annotations)
+	}
+}
+
+func TestRunVarAnnotationSetNumberJSON(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "ALPHA", "one", "test"); err != nil {
 		t.Fatal(err)
 	}
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "var", "vapor-secret", "--env", "default", "--key", "ALPHA", "--enabled=false", "--json"}, strings.NewReader(""), &output, &output)
-	if err := runner.runVarVaporSecret(runner.args[3:]); err != nil {
+	runner := NewRunner([]string{"ghostable", "var", "annotation", "set", "--env", "default", "--key", "ALPHA", "--name", "rotation_days", "--number", "90", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(output.String(), `"rotation_days"`) || !strings.Contains(output.String(), `"number": 90`) {
+		t.Fatalf("expected number annotation JSON, got:\n%s", output.String())
+	}
 
-	variable, exists, err := repo.GetVariable("default", "ALPHA")
+	result, err := repo.ReadKeyAnnotations("default", "ALPHA")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exists || variable.VaporSecret {
-		t.Fatalf("expected variable to be unmarked as a Vapor Secret, got exists=%v variable=%#v", exists, variable)
+	if len(result.Annotations) != 1 || result.Annotations[0].Value.Number == nil || *result.Annotations[0].Value.Number != 90 {
+		t.Fatalf("expected stored number annotation, got %#v", result.Annotations)
 	}
-	if !strings.Contains(output.String(), `"vaporSecret": false`) {
-		t.Fatalf("expected JSON payload to include disabled Vapor Secret state, got:\n%s", output.String())
+}
+
+func TestRunVarAnnotationSetBoolJSON(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "ALPHA", "one", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "annotation", "set", "--env", "default", "--key", "ALPHA", "--name", "deploy_managed", "--bool", "true", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"deploy_managed"`) || !strings.Contains(output.String(), `"bool": true`) {
+		t.Fatalf("expected bool annotation JSON, got:\n%s", output.String())
+	}
+
+	result, err := repo.ReadKeyAnnotations("default", "ALPHA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Annotations) != 1 || result.Annotations[0].Value.Bool == nil || !*result.Annotations[0].Value.Bool {
+		t.Fatalf("expected stored bool annotation, got %#v", result.Annotations)
+	}
+}
+
+func TestRunVarAnnotationSetBoolFalse(t *testing.T) {
+	root := setupRepoForVarCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "ALPHA", "one", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "var", "annotation", "set", "--env", "default", "--key", "ALPHA", "--name", "deploy_managed", "--bool", "false"}, strings.NewReader(""), &output, &output)
+	if err := runner.runVarAnnotation(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "deploy_managed=false") {
+		t.Fatalf("expected false bool annotation output, got:\n%s", output.String())
+	}
+
+	result, err := repo.ReadKeyAnnotations("default", "ALPHA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Annotations) != 1 || result.Annotations[0].Value.Bool == nil || *result.Annotations[0].Value.Bool {
+		t.Fatalf("expected stored false bool annotation, got %#v", result.Annotations)
 	}
 }
 
@@ -629,11 +709,9 @@ func TestRunVarPromoteCopiesValueAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	commented := true
-	vaporSecret := true
 	if err := repo.SetVariableWithOptions("default", "APP_KEY", "secret", store.VariableWriteOptions{
-		Reason:      "test",
-		Commented:   &commented,
-		VaporSecret: &vaporSecret,
+		Reason:    "test",
+		Commented: &commented,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +726,7 @@ func TestRunVarPromoteCopiesValueAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exists || variable.Value != "secret" || !variable.Commented || !variable.VaporSecret {
+	if !exists || variable.Value != "secret" || !variable.Commented {
 		t.Fatalf("expected copied value and metadata, got exists=%v variable=%#v", exists, variable)
 	}
 	for _, expected := range []string{

@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -433,11 +434,9 @@ func TestRepositoryWritesSignedKeyMetadataForVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	commented := true
-	vaporSecret := true
 	if err := repo.SetVariableWithOptions("local", "APP_KEY", "super-secret-value", VariableWriteOptions{
-		Reason:      "test",
-		Commented:   &commented,
-		VaporSecret: &vaporSecret,
+		Reason:    "test",
+		Commented: &commented,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -449,18 +448,12 @@ func TestRepositoryWritesSignedKeyMetadataForVariables(t *testing.T) {
 	if record.Status != domain.KeyStatusCommented {
 		t.Fatalf("expected commented metadata status, got %#v", record)
 	}
-	if record.Deploy == nil || record.Deploy.LaravelVaporSecret == nil || !*record.Deploy.LaravelVaporSecret {
-		t.Fatalf("expected Vapor Secret deploy metadata, got %#v", record.Deploy)
-	}
 	metadataJSON, err := os.ReadFile(repo.keyMetadataPath("local", "APP_KEY"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(metadataJSON), `"deploy"`) || !strings.Contains(string(metadataJSON), `"laravelVaporSecret": true`) {
-		t.Fatalf("expected flat Vapor deploy metadata, got:\n%s", string(metadataJSON))
-	}
-	if strings.Contains(string(metadataJSON), `"providerDeploy"`) || strings.Contains(string(metadataJSON), `"laravelVapor"`) {
-		t.Fatalf("did not expect legacy nested provider metadata, got:\n%s", string(metadataJSON))
+	if strings.Contains(string(metadataJSON), `"deploy"`) {
+		t.Fatalf("did not expect deploy metadata, got:\n%s", string(metadataJSON))
 	}
 	if record.Position == 0 {
 		t.Fatalf("expected key metadata position, got %#v", record)
@@ -477,12 +470,12 @@ func TestRepositoryWritesSignedKeyMetadataForVariables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "is_vapor_secret") || strings.Contains(string(encoded), "is_commented") {
+	if strings.Contains(string(encoded), "is_commented") {
 		t.Fatalf("value secret should not own key metadata, got %s", string(encoded))
 	}
 }
 
-func TestRepositoryOmitsEmptyKeyDeployMetadata(t *testing.T) {
+func TestRepositoryOmitsDeployMetadata(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
 
@@ -502,7 +495,7 @@ func TestRepositoryOmitsEmptyKeyDeployMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(content), `"deploy"`) || strings.Contains(string(content), `"providerDeploy"`) {
+	if strings.Contains(string(content), `"deploy"`) {
 		t.Fatalf("expected normal key metadata to omit deploy metadata, got:\n%s", string(content))
 	}
 }
@@ -614,7 +607,7 @@ func TestRepositoryStoresEncryptedKeyMetadataNote(t *testing.T) {
 	}
 }
 
-func TestRepositoryVaporSecretMetadataDoesNotRewriteValue(t *testing.T) {
+func TestRepositoryStoresTypedKeyAnnotations(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
 
@@ -630,19 +623,153 @@ func TestRepositoryVaporSecretMetadataDoesNotRewriteValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := readValueRecordForTest(t, repo, "local", "APP_KEY")
-	if err := repo.SetVariableVaporSecret("local", "APP_KEY", true, "metadata only"); err != nil {
+
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "Owner", NewStringKeyAnnotation("platform")); err != nil {
 		t.Fatal(err)
 	}
-	after := readValueRecordForTest(t, repo, "local", "APP_KEY")
-	if after.Version != before.Version || after.UpdatedAt != before.UpdatedAt || after.Secret.ClientSig != before.Secret.ClientSig {
-		t.Fatalf("expected metadata-only update not to rewrite value, before=%#v after=%#v", before, after)
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "rotation_days", NewNumberKeyAnnotation(90)); err != nil {
+		t.Fatal(err)
 	}
-	variable, exists, err := repo.GetVariable("local", "APP_KEY")
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "deploy_managed", NewBoolKeyAnnotation(true)); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata := readKeyMetadataRecordForTest(t, repo, "local", "APP_KEY")
+	if err := repo.verifyKeyMetadata(metadata); err != nil {
+		t.Fatalf("expected signed annotation metadata to verify: %v", err)
+	}
+	if metadata.Annotations["owner"].String == nil || *metadata.Annotations["owner"].String != "platform" {
+		t.Fatalf("expected normalized string annotation, got %#v", metadata.Annotations)
+	}
+	if metadata.Annotations["rotation_days"].Number == nil || *metadata.Annotations["rotation_days"].Number != 90 {
+		t.Fatalf("expected number annotation, got %#v", metadata.Annotations)
+	}
+	if metadata.Annotations["deploy_managed"].Bool == nil || !*metadata.Annotations["deploy_managed"].Bool {
+		t.Fatalf("expected bool annotation, got %#v", metadata.Annotations)
+	}
+
+	result, err := repo.ReadKeyAnnotations("local", "APP_KEY")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exists || !variable.VaporSecret {
-		t.Fatalf("expected Vapor Secret metadata to be readable, got exists=%v variable=%#v", exists, variable)
+	if len(result.Annotations) != 3 ||
+		result.Annotations[0].Name != "deploy_managed" ||
+		result.Annotations[1].Name != "owner" ||
+		result.Annotations[2].Name != "rotation_days" {
+		t.Fatalf("expected sorted annotations, got %#v", result.Annotations)
+	}
+	variableMetadata, err := repo.ReadVariableMetadata("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(variableMetadata) != 1 || variableMetadata[0].Annotations["owner"].String == nil || *variableMetadata[0].Annotations["owner"].String != "platform" {
+		t.Fatalf("expected annotations in metadata-only read, got %#v", variableMetadata)
+	}
+
+	variables, err := repo.ReadVariables("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variables["APP_KEY"].Annotations["owner"].String == nil || *variables["APP_KEY"].Annotations["owner"].String != "platform" {
+		t.Fatalf("expected annotations to be available with variable reads, got %#v", variables["APP_KEY"].Annotations)
+	}
+	after := readValueRecordForTest(t, repo, "local", "APP_KEY")
+	if after.Version != before.Version || after.Secret.ClientSig != before.Secret.ClientSig {
+		t.Fatalf("expected annotation update not to rewrite value, before=%#v after=%#v", before, after)
+	}
+}
+
+func TestRepositoryStoresAnnotationsForKeyOnlyMetadata(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetKeyAnnotation("local", "SCHEMA_ONLY", "owner", NewStringKeyAnnotation("platform")); err != nil {
+		t.Fatal(err)
+	}
+
+	record := readKeyMetadataRecordForTest(t, repo, "local", "SCHEMA_ONLY")
+	if record.Position == 0 {
+		t.Fatalf("expected key-only annotation metadata to receive a layout position, got %#v", record)
+	}
+	if record.Annotations["owner"].String == nil || *record.Annotations["owner"].String != "platform" {
+		t.Fatalf("expected key-only annotation, got %#v", record.Annotations)
+	}
+	variables, err := repo.ReadVariables("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(variables) != 0 {
+		t.Fatalf("did not expect key-only annotation to create a value, got %#v", variables)
+	}
+}
+
+func TestRepositoryRemovesKeyAnnotations(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("local", "APP_KEY", "super-secret-value", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "owner", NewStringKeyAnnotation("platform")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := repo.RemoveKeyAnnotation("local", "APP_KEY", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.Name != "owner" {
+		t.Fatalf("expected removed annotation name, got %#v", removed)
+	}
+
+	record := readKeyMetadataRecordForTest(t, repo, "local", "APP_KEY")
+	if len(record.Annotations) != 0 {
+		t.Fatalf("expected annotations to be removed, got %#v", record.Annotations)
+	}
+	content, err := os.ReadFile(repo.keyMetadataPath("local", "APP_KEY"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), `"annotations"`) {
+		t.Fatalf("expected empty annotations to be omitted, got:\n%s", string(content))
+	}
+}
+
+func TestRepositoryRejectsInvalidKeyAnnotations(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "9bad", NewStringKeyAnnotation("platform")); err == nil {
+		t.Fatal("expected invalid annotation name to be rejected")
+	}
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "owner", domain.KeyAnnotationValue{Type: "object"}); err == nil {
+		t.Fatal("expected invalid annotation type to be rejected")
+	}
+	if _, err := repo.SetKeyAnnotation("local", "APP_KEY", "priority", NewNumberKeyAnnotation(math.Inf(1))); err == nil {
+		t.Fatal("expected infinite annotation number to be rejected")
 	}
 }
 

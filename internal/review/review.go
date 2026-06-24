@@ -43,7 +43,6 @@ type EnvironmentReferenceStatus struct {
 	Environment    string `json:"environment"`
 	State          string `json:"state"`
 	SchemaPresent  bool   `json:"schemaPresent"`
-	VaporSecret    bool   `json:"vaporSecret,omitempty"`
 	Commented      bool   `json:"commented,omitempty"`
 	ValidSignature bool   `json:"validSignature,omitempty"`
 	UpdatedAt      string `json:"updatedAt,omitempty"`
@@ -118,7 +117,6 @@ func Review(ctx context.Context, input ReviewInput) (Report, error) {
 		SchemaKeys:       schemaKeys,
 		ExampleKeys:      exampleKeys,
 		ExampleExists:    exampleExists,
-		VaporConfigured:  vaporConfigured(repo, changes.Files),
 		Root:             repo.Root,
 	})
 
@@ -204,7 +202,6 @@ func environmentReferenceStatuses(key string, environments []string, inventories
 			if !variable.ValidSignature {
 				status.State = "invalid_signature"
 			}
-			status.VaporSecret = variable.VaporSecret
 			status.Commented = variable.Commented
 			status.ValidSignature = variable.ValidSignature
 			status.UpdatedAt = variable.UpdatedAt

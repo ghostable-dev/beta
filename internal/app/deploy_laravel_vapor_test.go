@@ -10,7 +10,7 @@ import (
 	"github.com/ghostable-dev/beta/internal/store"
 )
 
-func TestRunDeployVaporDryRunUsesVaporSecretMetadata(t *testing.T) {
+func TestRunDeployVaporDryRunUsesEnvironmentVariables(t *testing.T) {
 	root := setupDeployCommandTest(t)
 	repo, err := store.Open(root)
 	if err != nil {
@@ -20,9 +20,6 @@ func TestRunDeployVaporDryRunUsesVaporSecretMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repo.SetVariable("production", "APP_KEY", "secret", "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.SetVariableVaporSecret("production", "APP_KEY", true, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,12 +34,14 @@ func TestRunDeployVaporDryRunUsesVaporSecretMetadata(t *testing.T) {
 		"👻 Ghostable Vapor deploy plan.",
 		warn("Environment:") + " production",
 		warn("Vapor environment:") + " production",
-		warn("Env vars:") + " 1",
-		warn("Vapor secrets:") + " 1",
+		warn("Env vars:") + " 2",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected Vapor dry run output to contain %q, got:\n%s", expected, text)
 		}
+	}
+	if strings.Contains(text, "Secrets:") {
+		t.Fatalf("did not expect separate secret output, got:\n%s", text)
 	}
 }
 
@@ -56,9 +55,6 @@ func TestRunDeployVaporInvokesVaporCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repo.SetVariable("production", "APP_KEY", "secret", "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.SetVariableVaporSecret("production", "APP_KEY", true, "test"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,11 +89,14 @@ func TestRunDeployVaporInvokesVaporCLI(t *testing.T) {
 		"env:pull staging",
 		"env:push staging",
 		"APP_NAME=Ghostable",
-		"secret staging --name=APP_KEY --file=",
+		"APP_KEY=secret",
 	} {
 		if !strings.Contains(logText, expected) {
 			t.Fatalf("expected Vapor CLI log to contain %q, got:\n%s", expected, logText)
 		}
+	}
+	if strings.Contains(logText, "secret staging") {
+		t.Fatalf("did not expect separate secret command, got:\n%s", logText)
 	}
 
 	if _, err := os.Stat(filepath.Join(root, ".env.staging")); !os.IsNotExist(err) {
@@ -127,9 +126,6 @@ func TestRunDeployVaporRejectsProjectLocalVaporCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repo.SetVariable("production", "APP_KEY", "secret", "test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.SetVariableVaporSecret("production", "APP_KEY", true, "test"); err != nil {
 		t.Fatal(err)
 	}
 

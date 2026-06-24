@@ -3,8 +3,10 @@ package store
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -14,12 +16,28 @@ import (
 
 type keyMetadataUpdate func(*domain.EnvironmentKeyMetadataRecord) error
 
+type KeyAnnotation struct {
+	Name  string                    `json:"name"`
+	Value domain.KeyAnnotationValue `json:"value"`
+}
+
+type KeyAnnotationsResult struct {
+	Environment string          `json:"environment"`
+	Key         string          `json:"key"`
+	Annotations []KeyAnnotation `json:"annotations"`
+}
+
 type keyMetadataRotationRecord struct {
 	record domain.EnvironmentKeyMetadataRecord
 	note   string
 }
 
-const keyMetadataPositionStep int64 = 1000
+const (
+	keyMetadataPositionStep     int64 = 1000
+	maxKeyAnnotationStringBytes       = 2048
+)
+
+var keyAnnotationNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]*$`)
 
 func (r Repository) keyMetadataDir(env string) string {
 	return filepath.Join(r.environmentDir(env), "keys")
@@ -81,10 +99,12 @@ func (r Repository) newKeyMetadataRecord(env string, key string) domain.Environm
 }
 
 func (r Repository) writeKeyMetadata(record domain.EnvironmentKeyMetadataRecord) error {
+	if err := normalizeKeyMetadataAnnotations(&record); err != nil {
+		return err
+	}
 	if err := validateKeyMetadataRecordShape(record); err != nil {
 		return err
 	}
-	normalizeKeyMetadataDeploy(&record)
 	now := security.Now()
 	if record.CreatedAt == "" {
 		record.CreatedAt = now
@@ -104,13 +124,25 @@ func (r Repository) writeKeyMetadata(record domain.EnvironmentKeyMetadataRecord)
 	return writeJSONAtomic(r.keyMetadataPath(record.Environment, record.Key), record, 0o600)
 }
 
-func normalizeKeyMetadataDeploy(record *domain.EnvironmentKeyMetadataRecord) {
-	if record.Deploy == nil {
-		return
+func normalizeKeyMetadataAnnotations(record *domain.EnvironmentKeyMetadataRecord) error {
+	if len(record.Annotations) == 0 {
+		record.Annotations = nil
+		return nil
 	}
-	if record.Deploy.LaravelVaporSecret == nil {
-		record.Deploy = nil
+	normalized := domain.KeyAnnotations{}
+	for name, value := range record.Annotations {
+		normalizedName, err := normalizeKeyAnnotationName(name)
+		if err != nil {
+			return err
+		}
+		normalizedValue, err := normalizeKeyAnnotationValue(value)
+		if err != nil {
+			return fmt.Errorf("invalid annotation %q: %w", name, err)
+		}
+		normalized[normalizedName] = normalizedValue
 	}
+	record.Annotations = normalized
+	return nil
 }
 
 func validateKeyMetadataRecordShape(record domain.EnvironmentKeyMetadataRecord) error {
@@ -126,6 +158,9 @@ func validateKeyMetadataRecordShape(record domain.EnvironmentKeyMetadataRecord) 
 	if err := validateKeyMetadataStatus(record.Status); err != nil {
 		return err
 	}
+	if err := validateKeyAnnotations(record.Annotations); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -136,6 +171,256 @@ func validateKeyMetadataStatus(status string) error {
 	default:
 		return fmt.Errorf("invalid key metadata status %q", status)
 	}
+}
+
+func validateKeyAnnotations(annotations domain.KeyAnnotations) error {
+	for name, value := range annotations {
+		normalizedName, err := normalizeKeyAnnotationName(name)
+		if err != nil {
+			return err
+		}
+		if name != normalizedName {
+			return fmt.Errorf("annotation name %q must be stored as %q", name, normalizedName)
+		}
+		if _, err := normalizeKeyAnnotationValue(value); err != nil {
+			return fmt.Errorf("invalid annotation %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func normalizeKeyAnnotationName(name string) (string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return "", fmt.Errorf("annotation name is required")
+	}
+	if len(name) > 80 {
+		return "", fmt.Errorf("annotation name must be 80 characters or fewer")
+	}
+	if !keyAnnotationNamePattern.MatchString(name) {
+		return "", fmt.Errorf("annotation name must start with a letter and use lowercase letters, numbers, dots, hyphens, or underscores")
+	}
+	return name, nil
+}
+
+func normalizeKeyAnnotationValue(value domain.KeyAnnotationValue) (domain.KeyAnnotationValue, error) {
+	switch strings.TrimSpace(value.Type) {
+	case domain.KeyAnnotationString:
+		if value.String == nil {
+			return domain.KeyAnnotationValue{}, fmt.Errorf("string annotation value is required")
+		}
+		if len([]byte(*value.String)) > maxKeyAnnotationStringBytes {
+			return domain.KeyAnnotationValue{}, fmt.Errorf("string annotation value must be %d bytes or fewer", maxKeyAnnotationStringBytes)
+		}
+		return domain.KeyAnnotationValue{
+			Type:   domain.KeyAnnotationString,
+			String: value.String,
+		}, nil
+	case domain.KeyAnnotationNumber:
+		if value.Number == nil {
+			return domain.KeyAnnotationValue{}, fmt.Errorf("number annotation value is required")
+		}
+		if math.IsNaN(*value.Number) || math.IsInf(*value.Number, 0) {
+			return domain.KeyAnnotationValue{}, fmt.Errorf("number annotation value must be finite")
+		}
+		return domain.KeyAnnotationValue{
+			Type:   domain.KeyAnnotationNumber,
+			Number: value.Number,
+		}, nil
+	case domain.KeyAnnotationBool:
+		if value.Bool == nil {
+			return domain.KeyAnnotationValue{}, fmt.Errorf("bool annotation value is required")
+		}
+		return domain.KeyAnnotationValue{
+			Type: domain.KeyAnnotationBool,
+			Bool: value.Bool,
+		}, nil
+	default:
+		return domain.KeyAnnotationValue{}, fmt.Errorf("annotation type must be string, number, or bool")
+	}
+}
+
+func NewStringKeyAnnotation(value string) domain.KeyAnnotationValue {
+	return domain.KeyAnnotationValue{
+		Type:   domain.KeyAnnotationString,
+		String: &value,
+	}
+}
+
+func NewNumberKeyAnnotation(value float64) domain.KeyAnnotationValue {
+	return domain.KeyAnnotationValue{
+		Type:   domain.KeyAnnotationNumber,
+		Number: &value,
+	}
+}
+
+func NewBoolKeyAnnotation(value bool) domain.KeyAnnotationValue {
+	return domain.KeyAnnotationValue{
+		Type: domain.KeyAnnotationBool,
+		Bool: &value,
+	}
+}
+
+func (r Repository) ReadKeyMetadataKeys(env string) ([]string, error) {
+	if err := r.requireEnvironment(env); err != nil {
+		return nil, err
+	}
+	records, err := r.readEnvironmentKeyMetadataRecords(env)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(records))
+	for _, record := range records {
+		if err := r.verifyKeyMetadata(record); err != nil {
+			return nil, err
+		}
+		keys = append(keys, record.Key)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+func (r Repository) ReadKeyAnnotations(env string, key string) (KeyAnnotationsResult, error) {
+	if err := r.requireEnvironment(env); err != nil {
+		return KeyAnnotationsResult{}, err
+	}
+	if err := validateKey(key); err != nil {
+		return KeyAnnotationsResult{}, err
+	}
+	record, exists, err := r.readKeyMetadata(env, key)
+	if err != nil {
+		return KeyAnnotationsResult{}, err
+	}
+	result := KeyAnnotationsResult{
+		Environment: env,
+		Key:         key,
+	}
+	if !exists {
+		return result, nil
+	}
+	if err := r.verifyKeyMetadata(record); err != nil {
+		return KeyAnnotationsResult{}, err
+	}
+	result.Annotations = sortedKeyAnnotations(record.Annotations)
+	return result, nil
+}
+
+func (r Repository) SetKeyAnnotation(env string, key string, name string, value domain.KeyAnnotationValue) (KeyAnnotation, error) {
+	normalizedName, err := normalizeKeyAnnotationName(name)
+	if err != nil {
+		return KeyAnnotation{}, err
+	}
+	normalizedValue, err := normalizeKeyAnnotationValue(value)
+	if err != nil {
+		return KeyAnnotation{}, err
+	}
+	annotation := KeyAnnotation{
+		Name:  normalizedName,
+		Value: normalizedValue,
+	}
+	if err := r.updateKeyMetadata(env, key, func(record *domain.EnvironmentKeyMetadataRecord) error {
+		if record.Annotations == nil {
+			record.Annotations = domain.KeyAnnotations{}
+		}
+		record.Annotations[normalizedName] = normalizedValue
+		return nil
+	}); err != nil {
+		return KeyAnnotation{}, err
+	}
+	if err := r.recordEvent("variable.annotation.set", env, key, map[string]interface{}{
+		"name": normalizedName,
+		"type": normalizedValue.Type,
+	}); err != nil {
+		return KeyAnnotation{}, err
+	}
+	return annotation, nil
+}
+
+func (r Repository) RemoveKeyAnnotation(env string, key string, name string) (KeyAnnotation, error) {
+	if err := r.requireEnvironment(env); err != nil {
+		return KeyAnnotation{}, err
+	}
+	if err := r.requireWrite(env); err != nil {
+		return KeyAnnotation{}, err
+	}
+	if err := validateKey(key); err != nil {
+		return KeyAnnotation{}, err
+	}
+	normalizedName, err := normalizeKeyAnnotationName(name)
+	if err != nil {
+		return KeyAnnotation{}, err
+	}
+	record, exists, err := r.readKeyMetadata(env, key)
+	if err != nil {
+		return KeyAnnotation{}, err
+	}
+	if !exists {
+		return KeyAnnotation{}, fmt.Errorf("key metadata for %s was not found in %s", key, env)
+	}
+	annotationValue, exists := record.Annotations[normalizedName]
+	if !exists {
+		return KeyAnnotation{}, fmt.Errorf("annotation %q was not found on %s in %s", normalizedName, key, env)
+	}
+	if err := r.updateKeyMetadata(env, key, func(record *domain.EnvironmentKeyMetadataRecord) error {
+		delete(record.Annotations, normalizedName)
+		return nil
+	}); err != nil {
+		return KeyAnnotation{}, err
+	}
+	if err := r.recordEvent("variable.annotation.removed", env, key, map[string]interface{}{
+		"name": normalizedName,
+		"type": annotationValue.Type,
+	}); err != nil {
+		return KeyAnnotation{}, err
+	}
+	return KeyAnnotation{
+		Name:  normalizedName,
+		Value: annotationValue,
+	}, nil
+}
+
+func sortedKeyAnnotations(annotations domain.KeyAnnotations) []KeyAnnotation {
+	names := make([]string, 0, len(annotations))
+	for name := range annotations {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	result := make([]KeyAnnotation, 0, len(names))
+	for _, name := range names {
+		result = append(result, KeyAnnotation{
+			Name:  name,
+			Value: annotations[name],
+		})
+	}
+	return result
+}
+
+func cloneKeyAnnotations(annotations domain.KeyAnnotations) domain.KeyAnnotations {
+	if len(annotations) == 0 {
+		return nil
+	}
+	clone := make(domain.KeyAnnotations, len(annotations))
+	for name, value := range annotations {
+		clone[name] = cloneKeyAnnotationValue(value)
+	}
+	return clone
+}
+
+func cloneKeyAnnotationValue(value domain.KeyAnnotationValue) domain.KeyAnnotationValue {
+	clone := domain.KeyAnnotationValue{Type: value.Type}
+	if value.String != nil {
+		stringValue := *value.String
+		clone.String = &stringValue
+	}
+	if value.Number != nil {
+		numberValue := *value.Number
+		clone.Number = &numberValue
+	}
+	if value.Bool != nil {
+		boolValue := *value.Bool
+		clone.Bool = &boolValue
+	}
+	return clone
 }
 
 func (r Repository) readKeyMetadata(env string, key string) (domain.EnvironmentKeyMetadataRecord, bool, error) {

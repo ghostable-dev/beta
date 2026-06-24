@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/ghostable-dev/beta/internal/dotenv"
-	"github.com/ghostable-dev/beta/internal/store"
 )
 
 const (
@@ -25,7 +24,6 @@ type checkContext struct {
 	SchemaKeys       map[string]map[string]bool
 	ExampleKeys      map[string]bool
 	ExampleExists    bool
-	VaporConfigured  bool
 	Root             string
 }
 
@@ -36,7 +34,6 @@ func runChecks(report *Report, context checkContext) {
 	checkInvalidValueSignatures(report, context)
 	checkMissingSchemaRules(report, context)
 	checkMissingDotenvExampleKeys(report, context)
-	checkVaporSecretMetadata(report, context)
 	checkChangedVariablesWithoutCodeReferences(report, context)
 	checkPlaintextEnvFiles(report, context)
 }
@@ -116,33 +113,6 @@ func checkMissingDotenvExampleKeys(report *Report, context checkContext) {
 			Line:     location.Line,
 			Message:  fmt.Sprintf(".env.example does not include %s", key),
 		})
-	}
-}
-
-func checkVaporSecretMetadata(report *Report, context checkContext) {
-	if !context.VaporConfigured {
-		return
-	}
-	for key, references := range context.ReferenceKeys {
-		if !looksSensitiveKey(key) {
-			continue
-		}
-		location := firstReferenceLocation(references)
-		for _, env := range report.Environments {
-			variable, ok := context.Inventories[env][key]
-			if !ok || variable.VaporSecret {
-				continue
-			}
-			report.addFinding(Finding{
-				Severity:    SeverityWarning,
-				Code:        "vapor_secret_not_marked",
-				Key:         key,
-				Environment: env,
-				Path:        location.Path,
-				Line:        location.Line,
-				Message:     fmt.Sprintf("%s looks secret-like but is not marked as a Vapor Secret in %s", key, env),
-			})
-		}
 	}
 }
 
@@ -256,17 +226,4 @@ func referenceKeyMap(references []Reference) map[string][]Reference {
 		result[reference.Key] = append(result[reference.Key], reference)
 	}
 	return result
-}
-
-func vaporConfigured(repo store.Repository, files []ChangedFile) bool {
-	if strings.EqualFold(strings.TrimSpace(repo.Manifest.DeployTarget), "vapor") {
-		return true
-	}
-	for _, file := range files {
-		base := strings.ToLower(filepath.Base(file.Path))
-		if base == "vapor.yml" || base == "vapor.yaml" {
-			return true
-		}
-	}
-	return false
 }

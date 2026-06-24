@@ -537,7 +537,7 @@ func exampleVariableValueAllowed(variable domain.Variable, mode string) bool {
 	if mode == exampleValuesBlank {
 		return false
 	}
-	if variable.VaporSecret || looksSensitiveSeedKey(variable.Key) || looksSensitiveExampleValue(variable.Value) {
+	if looksSensitiveSeedKey(variable.Key) || looksSensitiveExampleValue(variable.Value) {
 		return false
 	}
 	return true
