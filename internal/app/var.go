@@ -264,6 +264,9 @@ func (r *Runner) runVarPull(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := r.requireProtectedEnvironmentAccess(repo, selected, protectedOperationVarPull); err != nil {
+		return err
+	}
 	variableKey, err := r.selectVariableKey(repo, selected, *key)
 	if err != nil {
 		return err

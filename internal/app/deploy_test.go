@@ -160,6 +160,7 @@ func TestRunDeployUsesAutomationCredentialToken(t *testing.T) {
 
 func setupDeployCommandTest(t *testing.T) string {
 	t.Helper()
+	allowProtectedEnvironmentAccessForTest(t)
 	root := setupRepoForEnvCommandTest(t)
 	repo, err := store.Open(root)
 	if err != nil {
