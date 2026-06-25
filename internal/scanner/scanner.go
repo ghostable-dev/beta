@@ -3,6 +3,8 @@ package scanner
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"math"
 	"os"
@@ -33,6 +35,9 @@ type Finding struct {
 	Redacted   string  `json:"redacted"`
 	Entropy    float64 `json:"entropy,omitempty"`
 	Confidence string  `json:"confidence"`
+
+	EvidenceDigest string `json:"-"`
+	Occurrence     int    `json:"-"`
 }
 
 type Result struct {
@@ -77,6 +82,7 @@ func Scan(options Options) (Result, error) {
 		}
 		return result.Findings[i].Path < result.Findings[j].Path
 	})
+	assignFindingOccurrences(result.Findings)
 	result.HasSecrets = len(result.Findings) > 0
 	return result, nil
 }
@@ -252,14 +258,15 @@ func inspectDetectorFindings(filePath string, lineNumber int, line string, level
 			}
 			seen[id] = true
 			findings = append(findings, Finding{
-				Path:       filePath,
-				Line:       lineNumber,
-				Column:     match[0] + 1,
-				Kind:       detector.kind,
-				Value:      maybeValue(value, showValue),
-				Redacted:   redact(value),
-				Entropy:    shannon(value),
-				Confidence: detector.confidence,
+				Path:           filePath,
+				Line:           lineNumber,
+				Column:         match[0] + 1,
+				Kind:           detector.kind,
+				Value:          maybeValue(value, showValue),
+				Redacted:       redact(value),
+				Entropy:        shannon(value),
+				Confidence:     detector.confidence,
+				EvidenceDigest: evidenceDigest(value),
 			})
 		}
 	}
@@ -284,19 +291,48 @@ func inspectAssignmentFindings(filePath string, lineNumber int, line string, lev
 
 		entropy := shannon(value)
 		findings = append(findings, Finding{
-			Path:       filePath,
-			Line:       lineNumber,
-			Column:     match[4] + 1,
-			Kind:       "Secret assignment",
-			Key:        key,
-			Value:      maybeValue(value, showValue),
-			Redacted:   redact(value),
-			Entropy:    entropy,
-			Confidence: assignmentConfidence(level, entropy),
+			Path:           filePath,
+			Line:           lineNumber,
+			Column:         match[4] + 1,
+			Kind:           "Secret assignment",
+			Key:            key,
+			Value:          maybeValue(value, showValue),
+			Redacted:       redact(value),
+			Entropy:        entropy,
+			Confidence:     assignmentConfidence(level, entropy),
+			EvidenceDigest: evidenceDigest(value),
 		})
 	}
 
 	return findings
+}
+
+func assignFindingOccurrences(findings []Finding) {
+	counts := map[string]int{}
+	for index := range findings {
+		key := findingOccurrenceKey(findings[index])
+		counts[key]++
+		findings[index].Occurrence = counts[key]
+	}
+}
+
+func findingOccurrenceKey(finding Finding) string {
+	parts := []string{
+		finding.Path,
+		finding.Kind,
+		finding.Key,
+		finding.EvidenceDigest,
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func evidenceDigest(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func assignmentThresholds(level string) (int, float64) {

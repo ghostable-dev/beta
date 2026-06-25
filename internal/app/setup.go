@@ -72,6 +72,7 @@ func (r *Runner) runSetup(args []string) error {
 		return err
 	}
 
+	r.printProgress(!*jsonOut, "Creating project identity and environment keys")
 	repo, created, err := store.Setup(".", store.SetupOptions{
 		Name:           projectName,
 		Environments:   envs,
@@ -90,6 +91,7 @@ func (r *Runner) runSetup(args []string) error {
 
 	var seedResult *store.PushResult
 	if dotenvSeed != nil && len(dotenvSeed.values) > 0 {
+		r.printProgress(!*jsonOut, fmt.Sprintf("Encrypting %d variable%s from %s", len(dotenvSeed.values), plural(len(dotenvSeed.values)), dotenvSeed.file))
 		result, err := repo.PutVariablesWithMetadata(domain.DefaultEnvName, dotenvSeed.values, store.PutOptions{Reason: "Seeded from .env during setup"})
 		if err != nil {
 			return err

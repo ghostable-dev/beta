@@ -288,6 +288,7 @@ func TestRunHygieneReportFindsUnusedAndStaleVariables(t *testing.T) {
 		"--env", "default",
 		"--stale-after", "1d",
 		"--rotation-after", "999999d",
+		"--unused",
 		"--json",
 	}, strings.NewReader(""), &output, &output)
 	if err := runner.runHygieneReport(runner.args[3:]); err != nil {
@@ -306,6 +307,161 @@ func TestRunHygieneReportFindsUnusedAndStaleVariables(t *testing.T) {
 	}
 	if hasHygieneFinding(report.Findings, "unused_variable", "USED_SECRET") {
 		t.Fatalf("did not expect USED_SECRET to be unused, got %#v", report.Findings)
+	}
+}
+
+func TestRunHygieneReportDoesNotMarkOldVariablesStaleByDefault(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "APP_DEBUG", "false", "test"); err != nil {
+		t.Fatal(err)
+	}
+	markVariableUpdatedAt(t, root, "default", "APP_DEBUG", "2000-01-01T00:00:00Z")
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{
+		"ghostable", "hygiene", "report",
+		"--env", "default",
+		"--rotation-after", "999999d",
+		"--json",
+	}, strings.NewReader(""), &output, &output)
+	if err := runner.runHygieneReport(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var report hygieneReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("parse hygiene JSON: %v\n%s", err, output.String())
+	}
+	if hasHygieneFinding(report.Findings, "stale_variable", "APP_DEBUG") {
+		t.Fatalf("did not expect APP_DEBUG to be stale by default, got %#v", report.Findings)
+	}
+	if hasHygieneFinding(report.Findings, "rotation_due", "APP_DEBUG") {
+		t.Fatalf("did not expect APP_DEBUG to be rotation-due without policy, got %#v", report.Findings)
+	}
+	if hasHygieneFinding(report.Findings, "unused_variable", "APP_DEBUG") {
+		t.Fatalf("did not expect APP_DEBUG to be unused by default, got %#v", report.Findings)
+	}
+}
+
+func TestRunHygienePromptsForCommandInInteractiveMode(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	input := strings.NewReader("1\n")
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "hygiene"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, expected := range []string{"Select a hygiene command", "report", "rotation"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected interactive hygiene menu to contain %q, got:\n%s", expected, text)
+		}
+	}
+}
+
+func TestRunHygieneReportFindsRotationDueFromPolicy(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "STRIPE_SECRET_KEY", "secret", "test"); err != nil {
+		t.Fatal(err)
+	}
+	markVariableUpdatedAt(t, root, "default", "STRIPE_SECRET_KEY", "2000-01-01T00:00:00Z")
+
+	var setOutput bytes.Buffer
+	setRunner := NewRunner([]string{
+		"ghostable", "hygiene", "rotation", "set",
+		"--key", "STRIPE_SECRET_KEY",
+		"--days", "90",
+		"--json",
+	}, strings.NewReader(""), &setOutput, &setOutput)
+	if err := setRunner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{
+		"ghostable", "hygiene", "report",
+		"--env", "default",
+		"--rotation-after", "999999d",
+		"--json",
+	}, strings.NewReader(""), &output, &output)
+	if err := runner.runHygieneReport(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	var report hygieneReport
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("parse hygiene JSON: %v\n%s", err, output.String())
+	}
+	if !hasHygieneFinding(report.Findings, "rotation_due", "STRIPE_SECRET_KEY") {
+		t.Fatalf("expected rotation_due finding, got %#v", report.Findings)
+	}
+}
+
+func TestRunHygieneRotationSetWritesEnvironmentOverride(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateEnvironment("production", "production"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{
+		"ghostable", "hygiene", "rotation", "set",
+		"--env", "production",
+		"--key", "STRIPE_SECRET_KEY",
+		"--days", "60",
+		"--json",
+	}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, ".ghostable", "hygiene.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(content)
+	for _, expected := range []string{
+		"rotation:",
+		"environments:",
+		"production:",
+		"STRIPE_SECRET_KEY:",
+		"rotationAfterDays: 60",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected hygiene policy to contain %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestRunHygieneRotationSetRejectsDurationDays(t *testing.T) {
+	setupRepoForEnvCommandTest(t)
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{
+		"ghostable", "hygiene", "rotation", "set",
+		"--key", "STRIPE_SECRET_KEY",
+		"--days", "90d",
+	}, strings.NewReader(""), &output, &output)
+
+	err := runner.Run()
+	if err == nil || !strings.Contains(err.Error(), "whole number of days") {
+		t.Fatalf("expected whole-number days error, got %v", err)
 	}
 }
 
@@ -335,7 +491,7 @@ func TestRunHygieneSuppressCreatesSignedSuppression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := buildHygieneReport(repo, []string{"default"}, 3650*24*time.Hour, 3650*24*time.Hour, false)
+	report, err := buildHygieneReport(repo, []string{"default"}, 3650*24*time.Hour, 3650*24*time.Hour, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +500,52 @@ func TestRunHygieneSuppressCreatesSignedSuppression(t *testing.T) {
 	}
 	if !hasHygieneFinding(report.SuppressedFindings, "unused_variable", "UNUSED_SECRET") {
 		t.Fatalf("expected suppressed unused variable finding, got %#v", report.SuppressedFindings)
+	}
+}
+
+func TestRunHygieneSuppressPromptsForCurrentFinding(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("default", "STRIPE_SECRET_KEY", "secret", "test"); err != nil {
+		t.Fatal(err)
+	}
+	markVariableUpdatedAt(t, root, "default", "STRIPE_SECRET_KEY", "2000-01-01T00:00:00Z")
+	var setOutput bytes.Buffer
+	setRunner := NewRunner([]string{
+		"ghostable", "hygiene", "rotation", "set",
+		"--key", "STRIPE_SECRET_KEY",
+		"--days", "90",
+		"--json",
+	}, strings.NewReader(""), &setOutput, &setOutput)
+	if err := setRunner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	input := &oneByteReader{reader: strings.NewReader("1\nkept for manual operations\nn\n")}
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "hygiene", "suppress"}, input, &output, &output)
+	runner.interactive = true
+	runner.prompts = prompt.New(input, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err = store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := buildHygieneReport(repo, []string{"default"}, 0, 3650*24*time.Hour, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != 0 {
+		t.Fatalf("expected finding to be suppressed, got %#v", report.Findings)
+	}
+	if !strings.Contains(output.String(), "Select finding to suppress") {
+		t.Fatalf("expected interactive finding picker, got:\n%s", output.String())
 	}
 }
 
@@ -363,6 +565,7 @@ func TestRunHygieneReportPrintsSARIF(t *testing.T) {
 		"--env", "default",
 		"--stale-after", "999999d",
 		"--rotation-after", "999999d",
+		"--unused",
 		"--sarif",
 	}, strings.NewReader(""), &output, &output)
 	if err := runner.runHygieneReport(runner.args[3:]); err != nil {

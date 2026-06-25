@@ -10,6 +10,8 @@ import (
 
 	"github.com/ghostable-dev/beta/internal/cli"
 	"github.com/ghostable-dev/beta/internal/domain"
+	hygienepolicy "github.com/ghostable-dev/beta/internal/hygiene"
+	"github.com/ghostable-dev/beta/internal/prompt"
 	"github.com/ghostable-dev/beta/internal/review"
 	"github.com/ghostable-dev/beta/internal/store"
 )
@@ -17,7 +19,8 @@ import (
 const hygieneReportSchema = "ghostable.hygiene-report.v1"
 
 var hygieneCommandOptions = []commandOption{
-	{Label: "report", Description: "Report stale, unused, and rotation-due secrets"},
+	{Label: "report", Description: "Report rotation, stale, and optional unused-variable hygiene"},
+	{Label: "rotation", Description: "Manage variable rotation hygiene rules"},
 	{Label: "suppress", Description: "Create a signed hygiene finding suppression"},
 	{Label: "rotate", Description: "Rotate an environment encryption key"},
 }
@@ -69,6 +72,7 @@ type hygieneFinding struct {
 	Key           string `json:"key,omitempty"`
 	AgeDays       int    `json:"ageDays,omitempty"`
 	ThresholdDays int    `json:"thresholdDays,omitempty"`
+	PolicySource  string `json:"policySource,omitempty"`
 	Suppressed    bool   `json:"suppressed,omitempty"`
 	SuppressionID string `json:"suppressionId,omitempty"`
 	Path          string `json:"path,omitempty"`
@@ -76,7 +80,14 @@ type hygieneFinding struct {
 
 func (r *Runner) runHygiene(args []string) error {
 	if len(args) == 0 {
-		return r.runHygieneReport(args)
+		if !r.interactive {
+			return r.runHygieneReport(args)
+		}
+		selected, err := r.selectCommand("Select a hygiene command", hygieneCommandOptions)
+		if err != nil {
+			return err
+		}
+		args = append(args, selected)
 	}
 	if isHelpArg(args[0]) {
 		r.printHygieneHelp()
@@ -86,6 +97,8 @@ func (r *Runner) runHygiene(args []string) error {
 	switch args[0] {
 	case "report":
 		return r.runHygieneReport(args[1:])
+	case "rotation":
+		return r.runHygieneRotation(args[1:])
 	case "suppress":
 		return r.runHygieneSuppress(args[1:])
 	case "rotate":
@@ -96,7 +109,7 @@ func (r *Runner) runHygiene(args []string) error {
 }
 
 func (r *Runner) printHygieneHelp() {
-	fmt.Fprintln(r.out, "Usage: ghostable hygiene [report|suppress|rotate] [options]")
+	fmt.Fprintln(r.out, "Usage: ghostable hygiene [report|rotation|suppress|rotate] [options]")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Commands:"))
 	printCommandDescriptions(r.out, hygieneCommandOptions)
@@ -104,14 +117,15 @@ func (r *Runner) printHygieneHelp() {
 
 func (r *Runner) runHygieneReport(args []string) error {
 	fs := newFlagSet("hygiene report", r.errOut)
-	staleAfterRaw := fs.String("stale-after", "90d", "Variable age threshold, such as 90d or 2160h")
+	staleAfterRaw := fs.String("stale-after", "0", "Legacy variable age threshold, such as 90d; disabled by default")
 	rotationAfterRaw := fs.String("rotation-after", "180d", "Environment key rotation threshold, such as 180d")
+	checkUnused := fs.Bool("unused", false, "Report stored variables not referenced by scanned code")
 	includeSuppressed := fs.Bool("include-suppressed", false, "Include suppressed findings in human or SARIF output")
 	jsonOut := fs.Bool("json", false, "Print hygiene report as JSON")
 	sarifOut := fs.Bool("sarif", false, "Print hygiene report as SARIF")
 	var environments cli.Strings
 	fs.Var(&environments, "env", "Environment to check; may be repeated or comma-separated")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("include-suppressed", "json", "sarif")); err != nil {
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("unused", "include-suppressed", "json", "sarif")); err != nil {
 		return err
 	}
 	if *jsonOut && *sarifOut {
@@ -130,11 +144,11 @@ func (r *Runner) runHygieneReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	envs, err := resolveSelectedEnvironments(repo, environments)
+	envs, err := resolveHygieneEnvironments(repo, environments)
 	if err != nil {
 		return err
 	}
-	report, err := buildHygieneReport(repo, envs, staleAfter, rotationAfter, *includeSuppressed)
+	report, err := buildHygieneReport(repo, envs, staleAfter, rotationAfter, *checkUnused, *includeSuppressed)
 	if err != nil {
 		return err
 	}
@@ -162,29 +176,16 @@ func (r *Runner) runHygieneSuppress(args []string) error {
 	if _, err := cli.Parse(fs, args, cli.BoolFlags("json")); err != nil {
 		return err
 	}
-	if *expiresAt != "" && *expiresIn != "" {
-		return fmt.Errorf("pass --expires-at or --expires-in, not both")
-	}
-	expiration := strings.TrimSpace(*expiresAt)
-	if expiration == "" && strings.TrimSpace(*expiresIn) != "" {
-		duration, err := parseAgeThreshold(*expiresIn)
-		if err != nil {
-			return err
-		}
-		expiration = time.Now().UTC().Add(duration).Format(time.RFC3339Nano)
-	}
 
 	repo, err := r.openRepo()
 	if err != nil {
 		return err
 	}
-	result, err := repo.CreateSuppression(store.CreateSuppressionInput{
-		Code:        *code,
-		Environment: *env,
-		Key:         *key,
-		Reason:      *reason,
-		ExpiresAt:   expiration,
-	})
+	input, err := r.resolveHygieneSuppressionInput(repo, *code, *env, *key, *reason, *expiresAt, *expiresIn)
+	if err != nil {
+		return err
+	}
+	result, err := repo.CreateSuppression(input)
 	if err != nil {
 		return err
 	}
@@ -194,6 +195,234 @@ func (r *Runner) runHygieneSuppress(args []string) error {
 	fmt.Fprintln(r.out, success(fmt.Sprintf("Created suppression %s.", result.Suppression.ID)))
 	fmt.Fprintf(r.out, "%s %s\n", warn("File:"), result.File)
 	return nil
+}
+
+func (r *Runner) resolveHygieneSuppressionInput(repo store.Repository, code string, env string, key string, reason string, expiresAt string, expiresIn string) (store.CreateSuppressionInput, error) {
+	if strings.TrimSpace(expiresAt) != "" && strings.TrimSpace(expiresIn) != "" {
+		return store.CreateSuppressionInput{}, fmt.Errorf("pass --expires-at or --expires-in, not both")
+	}
+
+	selectedCode := strings.TrimSpace(code)
+	selectedEnv := strings.TrimSpace(env)
+	selectedKey := strings.TrimSpace(key)
+	selectedFromFinding := false
+
+	if selectedCode == "" && r.interactive {
+		finding, ok, err := r.selectHygieneFindingForSuppression(repo)
+		if err != nil {
+			return store.CreateSuppressionInput{}, err
+		}
+		if ok {
+			selectedCode = finding.Code
+			selectedEnv = finding.Environment
+			selectedKey = finding.Key
+			selectedFromFinding = true
+		}
+	}
+
+	var err error
+	selectedCode, err = r.selectSuppressionCode(selectedCode)
+	if err != nil {
+		return store.CreateSuppressionInput{}, err
+	}
+
+	if !selectedFromFinding {
+		selectedEnv, selectedKey, err = r.selectSuppressionScope(repo, selectedEnv, selectedKey)
+		if err != nil {
+			return store.CreateSuppressionInput{}, err
+		}
+	}
+
+	selectedReason, err := r.askOptional("Suppression reason (optional)", reason)
+	if err != nil {
+		return store.CreateSuppressionInput{}, err
+	}
+
+	expiration, err := r.resolveSuppressionExpiration(expiresAt, expiresIn)
+	if err != nil {
+		return store.CreateSuppressionInput{}, err
+	}
+
+	return store.CreateSuppressionInput{
+		Source:      suppressionSourceHygiene,
+		Code:        selectedCode,
+		Environment: selectedEnv,
+		Key:         selectedKey,
+		Reason:      selectedReason,
+		ExpiresAt:   expiration,
+	}, nil
+}
+
+func (r *Runner) selectHygieneFindingForSuppression(repo store.Repository) (hygieneFinding, bool, error) {
+	envs, err := resolveHygieneEnvironments(repo, nil)
+	if err != nil {
+		return hygieneFinding{}, false, err
+	}
+	report, err := buildHygieneReport(repo, envs, 0, 180*24*time.Hour, false, false)
+	if err != nil {
+		return hygieneFinding{}, false, err
+	}
+	if len(report.Findings) == 0 {
+		return hygieneFinding{}, false, nil
+	}
+
+	choices := make([]prompt.SelectOption, 0, len(report.Findings)+1)
+	findingsByChoice := map[string]hygieneFinding{}
+	for index, finding := range report.Findings {
+		value := fmt.Sprintf("%d", index)
+		choices = append(choices, prompt.SelectOption{
+			Label:       hygieneFindingSuppressionLabel(finding),
+			Value:       value,
+			Description: hygieneFindingSuppressionDescription(finding),
+		})
+		findingsByChoice[value] = finding
+	}
+	custom := "Custom suppression"
+	choices = append(choices, prompt.SelectOption{Label: custom, Value: custom})
+
+	selected, err := r.prompts.SelectOptions("Select finding to suppress", choices, 0)
+	if err != nil {
+		return hygieneFinding{}, false, err
+	}
+	if selected == custom {
+		return hygieneFinding{}, false, nil
+	}
+	return findingsByChoice[selected], true, nil
+}
+
+func hygieneFindingSuppressionLabel(finding hygieneFinding) string {
+	return suppressionPromptLabel(finding.Code)
+}
+
+func hygieneFindingSuppressionDescription(finding hygieneFinding) string {
+	scope := finding.Environment
+	if finding.Key != "" {
+		scope = strings.TrimSpace(scope + " " + finding.Key)
+	}
+	if scope == "" {
+		scope = "project"
+	}
+	return suppressionPromptDescription(scope, suppressionPromptLocation(finding.Path, 0, 0), finding.Message)
+}
+
+func (r *Runner) selectSuppressionCode(provided string) (string, error) {
+	if strings.TrimSpace(provided) != "" {
+		return strings.TrimSpace(provided), nil
+	}
+	if !r.interactive {
+		return "", fmt.Errorf("pass --code")
+	}
+
+	choices := []string{
+		"rotation_due",
+		"unused_variable",
+		"stale_variable",
+		"environment_key_rotation_due",
+		"Custom code",
+	}
+	selected, err := r.prompts.Select("Suppression code", choices, 0)
+	if err != nil {
+		return "", err
+	}
+	if selected == "Custom code" {
+		return r.ask("Suppression code", "", "", "code")
+	}
+	return selected, nil
+}
+
+func (r *Runner) selectSuppressionScope(repo store.Repository, env string, key string) (string, string, error) {
+	env = strings.TrimSpace(env)
+	key = strings.TrimSpace(key)
+	if env != "" || key != "" {
+		if key == "" {
+			return env, key, nil
+		}
+		formattedKey, _, err := formatManualVariableKey(key)
+		if err != nil {
+			return "", "", err
+		}
+		return env, formattedKey, nil
+	}
+	if !r.interactive {
+		return env, key, nil
+	}
+
+	scope, err := r.prompts.Select("Suppression scope", []string{"Project", "Environment", "Variable"}, 0)
+	if err != nil {
+		return "", "", err
+	}
+	switch scope {
+	case "Project":
+		return "", "", nil
+	case "Environment":
+		selectedEnv, err := r.selectEnvironment(repo, "")
+		return selectedEnv, "", err
+	case "Variable":
+		selectedEnv, err := r.selectEnvironment(repo, "")
+		if err != nil {
+			return "", "", err
+		}
+		selectedKey, err := r.selectSuppressionKey(repo, selectedEnv)
+		if err != nil {
+			return "", "", err
+		}
+		return selectedEnv, selectedKey, nil
+	default:
+		return "", "", fmt.Errorf("unknown suppression scope %q", scope)
+	}
+}
+
+func (r *Runner) selectSuppressionKey(repo store.Repository, env string) (string, error) {
+	keys, err := repo.ReadKeyMetadataKeys(env)
+	if err != nil {
+		return "", err
+	}
+	if len(keys) == 0 {
+		return r.askManualVariableKey()
+	}
+	choices := append(keys, "Custom variable key")
+	selected, err := r.prompts.Select("Select a variable", choices, 0)
+	if err != nil {
+		return "", err
+	}
+	if selected == "Custom variable key" {
+		return r.askManualVariableKey()
+	}
+	return selected, nil
+}
+
+func (r *Runner) resolveSuppressionExpiration(expiresAt string, expiresIn string) (string, error) {
+	expiration := strings.TrimSpace(expiresAt)
+	if expiration != "" {
+		return expiration, nil
+	}
+	if strings.TrimSpace(expiresIn) != "" {
+		duration, err := parseAgeThreshold(expiresIn)
+		if err != nil {
+			return "", err
+		}
+		return time.Now().UTC().Add(duration).Format(time.RFC3339Nano), nil
+	}
+	if !r.interactive {
+		return "", nil
+	}
+
+	shouldExpire, err := r.prompts.Confirm("Expire this suppression?", false)
+	if err != nil {
+		return "", err
+	}
+	if !shouldExpire {
+		return "", nil
+	}
+	days, err := r.ask("Expires in days", "", "", "expires-in")
+	if err != nil {
+		return "", err
+	}
+	parsedDays, err := strconv.Atoi(strings.TrimSpace(days))
+	if err != nil || parsedDays <= 0 {
+		return "", fmt.Errorf("suppression expiration must be a whole number of days")
+	}
+	return time.Now().UTC().Add(time.Duration(parsedDays) * 24 * time.Hour).Format(time.RFC3339Nano), nil
 }
 
 func (r *Runner) runHygieneRotate(args []string) error {
@@ -236,20 +465,26 @@ func (r *Runner) runHygieneRotate(args []string) error {
 	return nil
 }
 
-func buildHygieneReport(repo store.Repository, envs []string, staleAfter time.Duration, rotationAfter time.Duration, includeSuppressed bool) (hygieneReport, error) {
+func buildHygieneReport(repo store.Repository, envs []string, staleAfter time.Duration, rotationAfter time.Duration, checkUnused bool, includeSuppressed bool) (hygieneReport, error) {
 	now := time.Now().UTC()
-	references, err := review.ScanReferences(review.ReferenceScanInput{
-		Root:    repo.Root,
-		Ignores: repo.Manifest.ScanIgnores,
-	})
+	referencedKeys := map[string]bool{}
+	if checkUnused {
+		references, err := review.ScanReferences(review.ReferenceScanInput{
+			Root:    repo.Root,
+			Ignores: repo.Manifest.ScanIgnores,
+		})
+		if err != nil {
+			return hygieneReport{}, err
+		}
+		for _, reference := range references {
+			referencedKeys[reference.Key] = true
+		}
+	}
+	suppressions, err := repo.Suppressions(now)
 	if err != nil {
 		return hygieneReport{}, err
 	}
-	referencedKeys := map[string]bool{}
-	for _, reference := range references {
-		referencedKeys[reference.Key] = true
-	}
-	suppressions, err := repo.Suppressions(now)
+	policy, err := hygienepolicy.LoadPolicy(repo.Root)
 	if err != nil {
 		return hygieneReport{}, err
 	}
@@ -315,7 +550,7 @@ func buildHygieneReport(repo store.Repository, envs []string, staleAfter time.Du
 				UpdatedAt:   variable.UpdatedAt,
 				AgeDays:     variableAge,
 			})
-			if !referencedKeys[variable.Key] {
+			if checkUnused && !referencedKeys[variable.Key] {
 				report.Summary.UnusedVariables++
 				report.Findings = append(report.Findings, hygieneFinding{
 					Severity:    "warning",
@@ -337,12 +572,62 @@ func buildHygieneReport(repo store.Repository, envs []string, staleAfter time.Du
 					Message:       fmt.Sprintf("%s in %s is %d days old", variable.Key, env, variableAge),
 				})
 			}
+			resolvedRule, ok := hygienepolicy.ResolveRotationRule(policy, env, variable.Key)
+			if !ok {
+				continue
+			}
+			threshold, err := parseRotationPolicyThreshold(env, variable.Key, resolvedRule.Rule.RotationAfterDays)
+			if err != nil {
+				return hygieneReport{}, err
+			}
+			if threshold > 0 && ageAtLeast(variable.UpdatedAt, now, threshold) {
+				report.Summary.RotationDue++
+				report.Findings = append(report.Findings, hygieneFinding{
+					Severity:      "warning",
+					Code:          "rotation_due",
+					Environment:   env,
+					Key:           variable.Key,
+					AgeDays:       variableAge,
+					ThresholdDays: durationDays(threshold),
+					PolicySource:  resolvedRule.Source,
+					Path:          hygienepolicy.DefaultPolicyPath,
+					Message:       fmt.Sprintf("%s in %s is %d days old; rotation policy is %d days", variable.Key, env, variableAge, resolvedRule.Rule.RotationAfterDays),
+				})
+			}
 		}
 	}
 
 	sortHygieneReport(&report)
 	applyHygieneSuppressions(&report, suppressions, includeSuppressed)
 	return report, nil
+}
+
+func parseRotationPolicyThreshold(env string, key string, days int) (time.Duration, error) {
+	if days <= 0 {
+		return 0, fmt.Errorf("rotation policy for %s in %s must have rotationAfterDays greater than zero", key, env)
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+func resolveHygieneEnvironments(repo store.Repository, requested []string) ([]string, error) {
+	if len(requested) > 0 {
+		return resolveSelectedEnvironments(repo, requested)
+	}
+
+	names := []string{}
+	seen := map[string]bool{}
+	for _, name := range repo.Manifest.AuditEnvs {
+		if _, ok := repo.Manifest.Environments[name]; !ok || seen[name] {
+			continue
+		}
+		names = append(names, name)
+		seen[name] = true
+	}
+	if len(names) > 0 {
+		sort.Strings(names)
+		return names, nil
+	}
+	return resolveSelectedEnvironments(repo, nil)
 }
 
 func applyHygieneSuppressions(report *hygieneReport, suppressions []store.SuppressionEntry, includeSuppressed bool) {
@@ -372,6 +657,9 @@ func applyHygieneSuppressions(report *hygieneReport, suppressions []store.Suppre
 
 func matchingSuppression(finding hygieneFinding, suppressions []domain.SuppressionRecord) (domain.SuppressionRecord, bool) {
 	for _, suppression := range suppressions {
+		if !suppressionMatchesSource(suppression, suppressionSourceHygiene) {
+			continue
+		}
 		if suppression.Code != finding.Code {
 			continue
 		}

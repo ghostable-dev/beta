@@ -127,6 +127,8 @@ func findingSummary(finding hygieneFinding) string {
 		return "Stored variable is not referenced by scanned code"
 	case "stale_variable":
 		return "Stored variable has not changed within the configured age threshold"
+	case "rotation_due":
+		return "Stored variable is due for rotation"
 	case "environment_key_rotation_due":
 		return "Environment encryption key is due for rotation"
 	case "invalid_suppression":

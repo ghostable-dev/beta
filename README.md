@@ -68,9 +68,9 @@ ghostable env pull --env default --file .env
 ghostable env diff --env default --file .env
 ghostable env diff --from staging --to production
 ghostable validate --env default
+ghostable hygiene report --env production
 ghostable review --base origin/main --env production
 ghostable deploy production
-ghostable scan
 ```
 
 Most options can be omitted in an interactive terminal. Ghostable prompts for
@@ -86,16 +86,69 @@ Automation and agents should pass flags and prefer `--json`.
 - `env list|create|delete|push|sync|pull|diff|history`
   manages environment-level workflows.
 - `validate` checks environment values against schema rules.
-- `review` checks whether code changes and encrypted ENV metadata agree.
+- `review` checks whether code changes, encrypted ENV metadata, and hard-coded
+  secret scans agree.
 - `deploy [environment]` writes decrypted values to `.env` for deploy scripts.
 - `var push|pull|promote|delete|history|context|annotation`
   manages a single variable and its key metadata.
 - `schema file|rule|key` manages local validation schema files.
+- `hygiene report|rotation|suppress|rotate`
+  manages operational hygiene checks, rotation policy, suppressions, and
+  environment encryption key rotation.
 - `device create|join|list|status|approvers|share|grants|revoke` manages local device
   records, scoped automation devices, and policy grants.
 - `agent init|instructions|capabilities` emits safe instructions and a
   recommended read-only/dry-run command allowlist for coding agents.
-- `scan` finds hard-coded secrets locally without modifying files.
+
+## Hygiene
+
+`ghostable hygiene report` checks stored variables and environment metadata for
+operational hygiene issues. Variable rotation reminders are opt-in through
+`.ghostable/hygiene.yaml`; stable config such as `APP_DEBUG=false` is not
+reported as stale unless a rotation rule is configured for that key or
+`--stale-after` is passed explicitly.
+
+Unused-variable checks are also opt-in because framework and platform
+conventions can use environment values without direct code references:
+
+```sh
+ghostable hygiene report --env production --unused
+```
+
+Set a project-level rotation rule:
+
+```sh
+ghostable hygiene rotation set --key STRIPE_SECRET_KEY --days 90
+```
+
+Set an environment-specific override:
+
+```sh
+ghostable hygiene rotation set --env production --key STRIPE_SECRET_KEY --days 60
+```
+
+Rotation intervals are always whole days.
+
+List configured rules:
+
+```sh
+ghostable hygiene rotation list
+```
+
+The policy file uses the same project-default plus environment-override shape
+as validation rules:
+
+```yaml
+rotation:
+  keys:
+    STRIPE_SECRET_KEY:
+      rotationAfterDays: 90
+  environments:
+    production:
+      keys:
+        STRIPE_SECRET_KEY:
+          rotationAfterDays: 60
+```
 
 ## Review
 
@@ -194,8 +247,13 @@ deployment when changed variables should be available to the next deploy.
 
 ## Secret Scanning
 
-`ghostable scan` checks the current project for likely hard-coded secrets. It
-uses manifest ignores from:
+`ghostable review` runs encrypted ENV review and hard-coded secret scanning by
+default. Use `ghostable review --secrets-only` when you only want the local
+hard-coded secret scan, or `ghostable review --env-only` when you only want the
+ENV metadata checks. The legacy `ghostable scan` command is still available as
+a direct secret-scan path.
+
+Secret scanning uses manifest ignores from:
 
 ```yaml
 scan:
@@ -221,6 +279,7 @@ Committed project files:
 .ghostable/environments/<env>/keys/*.json
 .ghostable/environments/<env>/values/*.json
 .ghostable/events/*.json
+.ghostable/hygiene.yaml
 .ghostable/schema.yaml
 .ghostable/schemas/<env>.yaml
 ```

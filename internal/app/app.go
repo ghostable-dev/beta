@@ -170,9 +170,8 @@ var rootCommandOptions = []commandOption{
 	{Label: "var", Description: "Manage individual variables"},
 	{Label: "validate", Description: "Check values against schema rules"},
 	{Label: "schema", Description: "Manage validation schema files and rules"},
-	{Label: "review", Description: "Review code changes against encrypted ENV state"},
+	{Label: "review", Description: "Review ENV state and hard-coded secrets"},
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
-	{Label: "scan", Description: "Find hard-coded secrets"},
 	{Label: "example", Description: "Generate .env.example from encrypted state and code"},
 	{Label: "hygiene", Description: "Report stale, unused, and rotation-due secrets"},
 	{Label: "agents", Value: "agent", Description: "Print agent guidance"},
@@ -267,9 +266,8 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable var <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable validate [options]")
 	fmt.Fprintln(r.out, "  ghostable schema <command> [options]")
-	fmt.Fprintln(r.out, "  ghostable review --base <ref> [options]")
+	fmt.Fprintln(r.out, "  ghostable review [paths...] [options]")
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")
-	fmt.Fprintln(r.out, "  ghostable scan [paths...] [options]")
 	fmt.Fprintln(r.out, "  ghostable example <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable hygiene [command] [options]")
 	fmt.Fprintln(r.out, "  ghostable agents <command> [options]")

@@ -112,6 +112,9 @@ func TestRunSetupSeedsDefaultEnvironmentFromDotenvWhenConfirmed(t *testing.T) {
 	if !strings.Contains(text, "Imported 3 variables from .env into default.") {
 		t.Fatalf("expected import summary in output:\n%s", text)
 	}
+	if !strings.Contains(text, "Encrypting 3 variables from .env") {
+		t.Fatalf("expected setup progress while encrypting seed values:\n%s", text)
+	}
 
 	repo, err := store.Open(root)
 	if err != nil {

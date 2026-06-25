@@ -12,9 +12,15 @@ import (
 )
 
 type CreateSuppressionInput struct {
+	Source      string
 	Code        string
 	Environment string
 	Key         string
+	Path        string
+	Line        int
+	Column      int
+	Kind        string
+	Fingerprint string
 	Reason      string
 	ExpiresAt   string
 }
@@ -50,10 +56,17 @@ func (r Repository) CreateSuppression(input CreateSuppressionInput) (Suppression
 	if code == "" {
 		return SuppressionEntry{}, fmt.Errorf("suppression code is required")
 	}
+	source := normalizeSuppressionField(input.Source)
 	reason := strings.TrimSpace(input.Reason)
-	if reason == "" {
-		return SuppressionEntry{}, fmt.Errorf("suppression reason is required")
+	path := normalizeSuppressionPath(input.Path)
+	if input.Line < 0 {
+		return SuppressionEntry{}, fmt.Errorf("suppression line must be zero or greater")
 	}
+	if input.Column < 0 {
+		return SuppressionEntry{}, fmt.Errorf("suppression column must be zero or greater")
+	}
+	kind := normalizeSuppressionField(input.Kind)
+	fingerprint := normalizeSuppressionField(input.Fingerprint)
 	env := strings.TrimSpace(input.Environment)
 	if env != "" {
 		if err := r.requireEnvironment(env); err != nil {
@@ -81,9 +94,15 @@ func (r Repository) CreateSuppression(input CreateSuppressionInput) (Suppression
 		Schema:            domain.SuppressionSchema,
 		ProjectID:         r.Manifest.ID,
 		ID:                id,
+		Source:            source,
 		Code:              code,
 		Environment:       env,
 		Key:               key,
+		Path:              path,
+		Line:              input.Line,
+		Column:            input.Column,
+		Kind:              kind,
+		Fingerprint:       fingerprint,
 		Reason:            reason,
 		CreatedByDeviceID: r.DeviceID(),
 		CreatedAt:         security.Now(),
@@ -100,9 +119,19 @@ func (r Repository) CreateSuppression(input CreateSuppressionInput) (Suppression
 	if err := writeJSONAtomic(filepath.Join(r.Root, file), record, 0o644); err != nil {
 		return SuppressionEntry{}, err
 	}
-	if err := r.recordEvent("hygiene.suppression.created", env, key, map[string]interface{}{
-		"code":   code,
-		"reason": reason,
+	eventSource := source
+	if eventSource == "" {
+		eventSource = "hygiene"
+	}
+	if err := r.recordEvent(eventSource+".suppression.created", env, key, map[string]interface{}{
+		"source":      source,
+		"code":        code,
+		"reason":      reason,
+		"path":        path,
+		"line":        input.Line,
+		"column":      input.Column,
+		"kind":        kind,
+		"fingerprint": fingerprint,
 	}); err != nil {
 		return SuppressionEntry{}, err
 	}
@@ -157,7 +186,7 @@ func (r Repository) verifySuppression(record domain.SuppressionRecord) error {
 	if record.ProjectID != r.Manifest.ID {
 		return fmt.Errorf("suppression project id does not match this project")
 	}
-	if record.ID == "" || record.Code == "" || record.Reason == "" {
+	if record.ID == "" || record.Code == "" {
 		return fmt.Errorf("suppression is missing required fields")
 	}
 	if record.ClientSig == "" {
@@ -192,6 +221,17 @@ func suppressionExpired(record domain.SuppressionRecord, now time.Time) bool {
 		now = time.Now().UTC()
 	}
 	return !expiresAt.After(now)
+}
+
+func normalizeSuppressionField(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func normalizeSuppressionPath(value string) string {
+	value = strings.TrimSpace(value)
+	value = filepath.ToSlash(value)
+	value = strings.TrimPrefix(value, "./")
+	return value
 }
 
 func (r Repository) ReadEnvironmentKeyMetadata(env string) (EnvironmentKeyMetadata, error) {

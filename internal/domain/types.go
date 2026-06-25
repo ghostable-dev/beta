@@ -309,10 +309,16 @@ type SuppressionRecord struct {
 	Schema            string `json:"schema"`
 	ProjectID         string `json:"projectId"`
 	ID                string `json:"id"`
+	Source            string `json:"source,omitempty"`
 	Code              string `json:"code"`
 	Environment       string `json:"environment,omitempty"`
 	Key               string `json:"key,omitempty"`
-	Reason            string `json:"reason"`
+	Path              string `json:"path,omitempty"`
+	Line              int    `json:"line,omitempty"`
+	Column            int    `json:"column,omitempty"`
+	Kind              string `json:"kind,omitempty"`
+	Fingerprint       string `json:"fingerprint,omitempty"`
+	Reason            string `json:"reason,omitempty"`
 	CreatedByDeviceID string `json:"createdByDeviceId"`
 	CreatedAt         string `json:"createdAt"`
 	ExpiresAt         string `json:"expiresAt,omitempty"`
