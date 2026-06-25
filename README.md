@@ -314,26 +314,6 @@ $GHOSTABLE_KEYSTORE/<project-id>.json
 That fallback directory is created with `0700` permissions and identity files
 are created with `0600` permissions.
 
-## Security Notes
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting instructions and a
-longer description of Ghostable's local-first security model.
-
-- Device identity uses Ed25519 for signatures and X25519 for key exchange.
-- Value encryption uses XChaCha20-Poly1305 with 24-byte random nonces.
-- Environment values use a per-environment key, then derive separate encryption
-  and HMAC keys with HKDF-SHA256 scoped to `ghostable/<project>/<environment>`.
-- Environment keys are wrapped by a random DEK; that DEK is shared through
-  per-device X25519 + HKDF-SHA256 + XChaCha encrypted grants.
-- Device records, policy records, access grants, access envelopes, activity
-  events, key metadata, and value payloads are signed with Ed25519.
-- Secret values are never printed unless `--show-values` is provided.
-- Key annotations are not encrypted and should not contain secrets.
-- `var push` without `--file` uses a no-echo terminal prompt on Unix systems.
-- `.ghostable/environments/**/values/**` and
-  `.ghostable/environments/**/keys/**` are ignored by the scanner to avoid
-  inspecting encrypted payloads as source text.
-
 ## Implementation Notes
 
 This client intentionally does not include hosted Ghostable API behavior. Value
