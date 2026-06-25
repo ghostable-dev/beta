@@ -87,8 +87,7 @@ Automation and agents should pass flags and prefer `--json`.
 - `env list|create|delete|push|sync|pull|diff|history`
   manages environment-level workflows.
 - `validate` checks environment values against schema rules.
-- `review` checks whether code changes, encrypted ENV metadata, and hard-coded
-  secret scans agree.
+- `review` runs changed-code ENV checks and local hard-coded secret scanning.
 - `deploy [environment]` writes decrypted values to `.env` for deploy scripts.
 - `var push|pull|promote|delete|history|context|annotation`
   manages a single variable and its key metadata.
@@ -151,22 +150,24 @@ rotation:
           rotationAfterDays: 60
 ```
 
-## Review and Secret Scanning
+## Review
 
-`ghostable review` scans changed lines for common ENV access patterns in
+`ghostable review` is the local review command. By default, it checks changed
+code for both ENV usage drift and hard-coded secrets.
+
+For ENV usage drift, it scans changed lines for common ENV access patterns in
 PHP/Laravel, JavaScript/TypeScript/Node, Go, Python, Ruby/Rails, Java, C#,
 Rust, Swift, and shell/deploy scripts. It compares those references with
 encrypted Ghostable values, schema files, `.env.example`, and signed
-`.ghostable/` records. GitHub Actions workflow references under
-`.github/` are ignored because those often come from GitHub Secrets or Vars.
+`.ghostable/` records. GitHub Actions workflow references under `.github/` are
+ignored because those often come from GitHub Secrets or Vars.
 
-`ghostable review` also runs local hard-coded secret scanning by default. Use
-`ghostable review --secrets-only` when you only want the secret scan, or
-`ghostable review --env-only` when you only want the ENV metadata checks. The
-legacy `ghostable scan` command is still available as a direct secret-scan
-path.
+For hard-coded secrets, it scans changed files locally and redacts findings by
+default. Use `ghostable review --secrets-only` when you only want the secret
+scan, or `ghostable review --env-only` when you only want the ENV metadata
+checks.
 
-Secret scanning uses manifest ignores from:
+The secret-scanning part of `ghostable review` uses manifest ignores from:
 
 ```yaml
 scan:
@@ -177,9 +178,8 @@ scan:
     - .ghostable/environments/**/keys/**
 ```
 
-Findings are redacted by default. Use `--json` for machine-readable output.
-`--show-values` exists for explicit human debugging, but agents should avoid it
-unless the user asks.
+Use `--json` for machine-readable output. `--show-values` exists for explicit
+human debugging, but agents should avoid it unless the user asks.
 
 ## Deploy Scripts
 
