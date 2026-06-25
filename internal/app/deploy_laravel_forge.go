@@ -66,6 +66,11 @@ func (r *Runner) runDeployForge(args []string) error {
 	if site == "" {
 		return fmt.Errorf("Laravel Forge site is required; pass --forge-site <SITE>")
 	}
+	if !*dryRun {
+		if err := r.requireProtectedEnvironmentAccess(repo, selected, protectedOperationDeploy); err != nil {
+			return err
+		}
+	}
 
 	plan, err := buildForgeDeployPlan(repo, selected, site, only)
 	if err != nil {

@@ -68,6 +68,11 @@ func (r *Runner) runDeployCloud(args []string) error {
 	if cloudEnvironment == "" {
 		return fmt.Errorf("Laravel Cloud environment is required")
 	}
+	if !*dryRun {
+		if err := r.requireProtectedEnvironmentAccess(repo, selected, protectedOperationDeploy); err != nil {
+			return err
+		}
+	}
 
 	plan, err := buildCloudDeployPlan(repo, selected, cloudEnvironment, only)
 	if err != nil {

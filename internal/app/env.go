@@ -22,6 +22,7 @@ var envCommandOptions = []commandOption{
 	{Label: "push", Description: "Store values from an env file"},
 	{Label: "sync", Description: "Push and remove missing keys"},
 	{Label: "pull", Description: "Write stored values to an env file"},
+	{Label: "clean", Description: "Remove local env files from the project root"},
 	{Label: "run", Description: "Run a command with decrypted environment values"},
 	{Label: "diff", Description: "Compare an env file or environment"},
 	{Label: "history", Description: "Show signed change history"},
@@ -106,6 +107,8 @@ func (r *Runner) runEnv(args []string) error {
 		return r.runEnvPush(args[1:], true)
 	case "pull":
 		return r.runEnvPull(args[1:])
+	case "clean":
+		return r.runEnvClean(args[1:])
 	case "run":
 		return r.runEnvRun(args[1:])
 	case "diff":

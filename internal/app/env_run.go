@@ -62,6 +62,9 @@ func (r *Runner) runEnvRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := r.requireProtectedEnvironmentAccess(repo, selected, protectedOperationEnvRun); err != nil {
+		return err
+	}
 
 	if len(positionals) == 0 {
 		if !r.interactive {

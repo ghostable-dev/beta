@@ -267,6 +267,7 @@ func TestRunEnvRunInteractiveSuggestsProjectCommands(t *testing.T) {
 }
 
 func TestRunEnvRunInteractiveHidesRiskySuggestionsForProduction(t *testing.T) {
+	allowProtectedEnvironmentAccessForTest(t)
 	root := setupRepoForEnvRunTest(t, map[string]string{})
 	repo, err := store.Open(root)
 	if err != nil {
@@ -311,6 +312,7 @@ func TestRunEnvRunInteractiveHidesRiskySuggestionsForProduction(t *testing.T) {
 }
 
 func TestRunEnvRunInteractiveRiskyCustomCommandRequiresEnvironmentName(t *testing.T) {
+	allowProtectedEnvironmentAccessForTest(t)
 	root := setupRepoForEnvRunTest(t, map[string]string{})
 	repo, err := store.Open(root)
 	if err != nil {

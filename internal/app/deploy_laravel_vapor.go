@@ -69,6 +69,11 @@ func (r *Runner) runDeployVapor(args []string) error {
 	if err := validateVaporEnvironment(vaporEnvironment); err != nil {
 		return err
 	}
+	if !*dryRun {
+		if err := r.requireProtectedEnvironmentAccess(repo, selected, protectedOperationDeploy); err != nil {
+			return err
+		}
+	}
 
 	plan, err := buildVaporDeployPlan(repo, selected, vaporEnvironment)
 	if err != nil {

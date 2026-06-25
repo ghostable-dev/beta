@@ -61,6 +61,15 @@ func (r *Runner) writeEnvironmentFile(request environmentPullRequest) (store.Rep
 	if request.File == "" {
 		request.File = envFileDefault(selected)
 	}
+	if environmentPullRequiresProtectedAccess(request) {
+		operation := protectedOperationEnvPull
+		if request.Deploy {
+			operation = protectedOperationDeploy
+		}
+		if err := r.requireProtectedEnvironmentAccess(repo, selected, operation); err != nil {
+			return store.Repository{}, store.PullResult{}, "", err
+		}
+	}
 	result, rendered, err := repo.Pull(selected, store.PullOptions{
 		File:      request.File,
 		Only:      request.Only,
@@ -75,6 +84,13 @@ func (r *Runner) writeEnvironmentFile(request environmentPullRequest) (store.Rep
 		return store.Repository{}, store.PullResult{}, "", err
 	}
 	return repo, result, rendered, nil
+}
+
+func environmentPullRequiresProtectedAccess(request environmentPullRequest) bool {
+	if request.DryRun && !request.ShowValues {
+		return false
+	}
+	return true
 }
 
 func (r *Runner) printDeploySuccess(repo store.Repository, result store.PullResult) {

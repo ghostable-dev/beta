@@ -1636,6 +1636,10 @@ func (r Repository) KeyPath() string {
 	return r.identityStore.Path(r.Manifest.ID)
 }
 
+func (r Repository) UsesAutomationCredential() bool {
+	return r.identityPath == automationCredentialEnvironmentVariable
+}
+
 func (r Repository) normalizeAutomationCredentialGrants(grants []AutomationCredentialGrant) ([]AutomationCredentialGrant, error) {
 	byEnvironment := map[string]string{}
 	for _, grant := range grants {

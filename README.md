@@ -84,7 +84,7 @@ Automation and agents should pass flags and prefer `--json`.
 - `setup` initializes `.ghostable/`, a local device record, policy, key metadata files,
   and a private local device identity.
 - `status` prints project, environment, device, and value counts.
-- `env list|create|delete|push|sync|pull|diff|history`
+- `env list|create|delete|push|sync|pull|clean|diff|history`
   manages environment-level workflows.
 - `validate` checks environment values against schema rules.
 - `review` runs changed-code ENV checks and local hard-coded secret scanning.
@@ -180,6 +180,46 @@ scan:
 
 Use `--json` for machine-readable output. `--show-values` exists for explicit
 human debugging, but agents should avoid it unless the user asks.
+
+## Protected Production Access
+
+Production-like environments require local user confirmation before Ghostable
+writes, prints, injects, or deploys decrypted values. Environment names and
+types containing `prod`, `production`, or `live` are treated as production-like.
+
+Protected local-device commands include:
+
+```sh
+ghostable env pull --env production
+ghostable env run --env production -- <command>
+ghostable var pull --env production --key APP_KEY --show-values
+ghostable deploy production
+ghostable deploy laravel-forge production --forge-site example.com
+ghostable deploy laravel-vapor production
+ghostable deploy laravel-cloud production
+```
+
+On macOS, Ghostable uses LocalAuthentication and requires Touch ID biometric
+verification. On Linux, Ghostable uses the local PAM-backed `sudo`
+confirmation, which can use fingerprint verification when the machine's PAM
+stack is configured for it. On Windows, Ghostable asks Windows to verify the
+current user with Windows Hello or the machine's configured fallback.
+
+Non-interactive local devices cannot satisfy protected access prompts. CI,
+deploy scripts, and agents should use a scoped `GHOSTABLE_CI_TOKEN` automation
+credential instead. Dry runs that do not write or print decrypted values do not
+require confirmation.
+
+Remove local plaintext env files after sensitive work:
+
+```sh
+ghostable env clean --dry-run
+ghostable env clean
+```
+
+`env clean` removes project-root `.env` and `.env.*` files, including
+Ghostable backup files. It keeps `.env.example` files by default; pass
+`--include-example` only when those templates should also be removed.
 
 ## Deploy Scripts
 
