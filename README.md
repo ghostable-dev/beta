@@ -12,11 +12,12 @@ Ghostable is a server-less CLI for local-first environment management:
 projects, environments, variables, devices, schema validation, agent guidance,
 and signed-style activity records.
 
-This client does not call Ghostable servers. Encrypted value files, public
-device records, signed policy, signed activity, environment keys, and access
-grants live under `.ghostable/` and are intended to be committed to git. Private
-device keys are stored outside the repository in the platform's native secret
-store when available, or in a restrictive file-backed identity store otherwise.
+Ghostable keeps environment management local-first and repository-backed.
+Encrypted value files, public device records, signed policy, signed activity,
+environment keys, and access grants live under `.ghostable/` and are intended to
+be committed to git. Private device keys are stored outside the repository in
+the platform's native secret store when available, or in a restrictive
+file-backed identity store otherwise.
 
 ## Install
 
@@ -314,6 +315,9 @@ That fallback directory is created with `0700` permissions and identity files
 are created with `0600` permissions.
 
 ## Security Notes
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting instructions and a
+longer description of Ghostable's local-first security model.
 
 - Device identity uses Ed25519 for signatures and X25519 for key exchange.
 - Value encryption uses XChaCha20-Poly1305 with 24-byte random nonces.
