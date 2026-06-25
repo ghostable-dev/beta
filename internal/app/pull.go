@@ -46,6 +46,9 @@ func (r *Runner) pullEnvironmentFile(request environmentPullRequest) error {
 	if result.BackupFile != "" {
 		fmt.Fprintf(r.out, "%s %s\n", warn("Backup:"), result.BackupFile)
 	}
+	if shouldPrintEnvCleanupHint(request, result) {
+		fmt.Fprintf(r.out, "%s Run `ghostable env clean --dry-run` before committing or after sensitive local work.\n", warn("Cleanup:"))
+	}
 	return nil
 }
 
@@ -91,6 +94,13 @@ func environmentPullRequiresProtectedAccess(request environmentPullRequest) bool
 		return false
 	}
 	return true
+}
+
+func shouldPrintEnvCleanupHint(request environmentPullRequest, result store.PullResult) bool {
+	if request.JSON || request.DryRun || result.Written == 0 {
+		return false
+	}
+	return strings.HasPrefix(result.File, ".env")
 }
 
 func (r *Runner) printDeploySuccess(repo store.Repository, result store.PullResult) {

@@ -86,7 +86,7 @@ func TestRunAgentsAlias(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "agents", "capabilities", "--json"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "agent", "capabilities", "--json"}, strings.NewReader(""), &output, &output)
 	if err := runner.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -228,5 +228,11 @@ func TestRunAccessCreateNormalizesDeployKindToAccess(t *testing.T) {
 	}
 	if result.Credential.Kind != "access" {
 		t.Fatalf("expected deploy alias to normalize to access, got %q", result.Credential.Kind)
+	}
+	if result.Credential.Usage != "deploy" {
+		t.Fatalf("expected deploy usage to be preserved, got %q", result.Credential.Usage)
+	}
+	if len(result.NextSteps) == 0 || !strings.Contains(result.NextSteps[0], "GHOSTABLE_CI_TOKEN") {
+		t.Fatalf("expected credential JSON next steps, got %#v", result.NextSteps)
 	}
 }

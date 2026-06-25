@@ -124,8 +124,19 @@ func (r *Runner) runEnv(args []string) error {
 	case "file":
 		return r.runEnvFile(args[1:])
 	default:
-		return fmt.Errorf("unknown env command %q", args[0])
+		return unknownEnvCommandError(args[0])
 	}
+}
+
+func unknownEnvCommandError(command string) error {
+	suggestions := map[string]string{
+		"copy":     "Run `ghostable env duplicate <source> <target>` to copy an environment.",
+		"validate": "Run `ghostable validate --env <env>` to check values against schema rules.",
+	}
+	if suggestion, ok := suggestions[command]; ok {
+		return fmt.Errorf("unknown env command %q. %s", command, suggestion)
+	}
+	return fmt.Errorf("unknown env command %q. Run `ghostable env --help` for available commands", command)
 }
 
 func (r *Runner) printEnvHelp() {

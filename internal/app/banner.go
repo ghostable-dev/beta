@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -38,6 +39,10 @@ func renderGhostableBanner() string {
 		}
 
 		color := ghostableGradient[min(index, len(ghostableGradient)-1)]
+		if os.Getenv("NO_COLOR") != "" {
+			lines = append(lines, visibleLine)
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s\x1b[0m", color.r, color.g, color.b, visibleLine))
 	}
 

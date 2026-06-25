@@ -79,6 +79,7 @@ func buildEnvCleanResult(repo store.Repository, includeExample bool, dryRun bool
 	return envCleanResult{
 		Root:           repo.Root,
 		Files:          files,
+		Removed:        []string{},
 		DryRun:         dryRun,
 		IncludeExample: includeExample,
 	}, nil

@@ -44,7 +44,12 @@ func Validate(root string, reader VariableReader, env string, values map[string]
 		return Result{}, err
 	}
 
-	result := Result{Environment: env, File: file, Warnings: warnings}
+	result := Result{
+		Environment: env,
+		File:        file,
+		Errors:      []ValidationError{},
+		Warnings:    warnings,
+	}
 	for key, keyRules := range rules {
 		value, exists := values[key]
 		nullable := hasRule(keyRules, "nullable")

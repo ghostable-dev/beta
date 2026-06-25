@@ -398,8 +398,11 @@ func buildExampleFileContent(file string, existing string, keys []string, values
 		keySet[key] = true
 	}
 	result := exampleGenerateResult{
-		File: file,
-		Keys: append([]string{}, keys...),
+		File:     file,
+		Keys:     append([]string{}, keys...),
+		Added:    []string{},
+		Existing: []string{},
+		Removed:  []string{},
 	}
 
 	if replace || strings.TrimSpace(existing) == "" {

@@ -129,6 +129,9 @@ func TestRunEnvCopyIsUnknown(t *testing.T) {
 	if !strings.Contains(err.Error(), `unknown env command "copy"`) {
 		t.Fatalf("expected env copy to be unknown, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "ghostable env duplicate") {
+		t.Fatalf("expected env copy suggestion, got %v", err)
+	}
 }
 
 func TestRunEnvValidateIsUnknown(t *testing.T) {
@@ -143,6 +146,9 @@ func TestRunEnvValidateIsUnknown(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `unknown env command "validate"`) {
 		t.Fatalf("expected env validate to be unknown, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghostable validate --env <env>") {
+		t.Fatalf("expected env validate suggestion, got %v", err)
 	}
 }
 

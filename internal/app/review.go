@@ -112,7 +112,7 @@ func (r *Runner) runReviewReport(args []string) error {
 
 func (r *Runner) parseReviewOptions(name string, args []string) (reviewOptions, error) {
 	fs := newFlagSet(name, r.errOut)
-	baseRef := fs.String("base", "origin/main", "Base git ref")
+	baseRef := fs.String("base", "", "Base git ref; defaults to upstream, origin/main, or HEAD")
 	headRef := fs.String("head", "", "Head git ref; defaults to HEAD plus local worktree changes")
 	format := fs.String("format", "human", "Output format: human or github")
 	jsonOut := fs.Bool("json", false, "Print review result as JSON")
@@ -246,6 +246,7 @@ func reviewRunFailure(result reviewRunResult) error {
 func printReviewRunHuman(r *Runner, result reviewRunResult, showValues bool) {
 	if result.Env != nil {
 		review.PrintHuman(r.out, *result.Env)
+		printReviewNextSteps(r.out, *result.Env)
 		if result.Suppressed.Env > 0 {
 			fmt.Fprintf(r.out, "%s %d ENV finding%s suppressed.\n", warn("Suppressed:"), result.Suppressed.Env, plural(result.Suppressed.Env))
 		}
@@ -256,6 +257,29 @@ func printReviewRunHuman(r *Runner, result reviewRunResult, showValues bool) {
 		}
 		printReviewSecretScanHuman(r, *result.Secrets, result.Suppressed.Secrets, showValues)
 	}
+}
+
+func printReviewNextSteps(out io.Writer, report review.Report) {
+	if !reviewHasFindingCode(report, "plaintext_env_secret") {
+		return
+	}
+	fmt.Fprintln(out, warn("Next:"))
+	fmt.Fprintln(out, "  Run `ghostable env clean --dry-run` to review local env files, then `ghostable env clean` when safe.")
+	fmt.Fprintln(out)
+}
+
+func reviewHasFindingCode(report review.Report, code string) bool {
+	for _, finding := range report.Errors {
+		if finding.Code == code {
+			return true
+		}
+	}
+	for _, finding := range report.Warnings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func printReviewSecretScanHuman(r *Runner, result scanner.Result, suppressed int, showValues bool) {
@@ -322,7 +346,7 @@ func (r *Runner) runReviewSuppress(args []string) error {
 		return nil
 	}
 	fs := newFlagSet("review suppress", r.errOut)
-	baseRef := fs.String("base", "origin/main", "Base git ref used while selecting a finding")
+	baseRef := fs.String("base", "", "Base git ref used while selecting a finding; defaults to upstream, origin/main, or HEAD")
 	headRef := fs.String("head", "", "Head git ref used while selecting a finding")
 	all := fs.Bool("all", false, "Select from ENV and hard-coded secret findings")
 	envOnly := fs.Bool("env-only", false, "Only select from encrypted ENV findings")
@@ -396,7 +420,7 @@ func (r *Runner) printReviewHelp() {
 	printCommandDescriptions(r.out, reviewCommandOptions)
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Options:"))
-	fmt.Fprintln(r.out, "  --base <REF>        Base git ref (default: origin/main)")
+	fmt.Fprintln(r.out, "  --base <REF>        Base git ref (defaults to upstream, origin/main, or HEAD)")
 	fmt.Fprintln(r.out, "  --head <REF>        Head git ref (defaults to HEAD plus local worktree changes)")
 	fmt.Fprintln(r.out, "  --env <ENV>         Environment to review; may be repeated or comma-separated")
 	fmt.Fprintln(r.out, "  --all               Run ENV and hard-coded secret checks (default)")

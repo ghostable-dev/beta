@@ -37,7 +37,7 @@ func TestRunReviewDefaultsToEnvAndSecretChecks(t *testing.T) {
 	writeReviewCommandFile(t, root, "config.js", "console.log('sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');\n")
 
 	var output bytes.Buffer
-	runner := NewRunner([]string{"ghostable", "review", "--base", "HEAD"}, strings.NewReader(""), &output, &output)
+	runner := NewRunner([]string{"ghostable", "review"}, strings.NewReader(""), &output, &output)
 	err := runner.Run()
 	if err == nil {
 		t.Fatal("expected review to fail")

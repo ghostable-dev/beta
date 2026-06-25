@@ -469,15 +469,17 @@ func (r Repository) Pull(env string, options PullOptions) (PullResult, string, e
 		Environment: env,
 		File:        options.File,
 		DryRun:      options.DryRun,
+		Variables:   []domain.Variable{},
 		Written:     len(values),
 	}
 	for _, key := range sortedKeys(values) {
 		result.Variables = append(result.Variables, domain.Variable{
-			Key:       key,
-			Value:     valueForOutput(values[key], options.ShowValue),
-			HasValue:  options.ShowValue,
-			Sensitive: true,
-			Commented: variables[key].Commented,
+			Key:          key,
+			Value:        valueForOutput(values[key], options.ShowValue),
+			HasValue:     options.ShowValue,
+			ValueOmitted: !options.ShowValue,
+			Sensitive:    true,
+			Commented:    variables[key].Commented,
 		})
 	}
 

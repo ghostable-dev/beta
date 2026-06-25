@@ -281,14 +281,15 @@ type LegacyValueRecord struct {
 }
 
 type Variable struct {
-	Key         string         `json:"key"`
-	Value       string         `json:"value,omitempty"`
-	HasValue    bool           `json:"hasValue"`
-	Sensitive   bool           `json:"sensitive"`
-	Commented   bool           `json:"commented,omitempty"`
-	Note        string         `json:"note,omitempty"`
-	UpdatedAt   string         `json:"updatedAt,omitempty"`
-	Annotations KeyAnnotations `json:"annotations,omitempty"`
+	Key          string         `json:"key"`
+	Value        string         `json:"value,omitempty"`
+	HasValue     bool           `json:"hasValue"`
+	ValueOmitted bool           `json:"valueOmitted,omitempty"`
+	Sensitive    bool           `json:"sensitive"`
+	Commented    bool           `json:"commented,omitempty"`
+	Note         string         `json:"note,omitempty"`
+	UpdatedAt    string         `json:"updatedAt,omitempty"`
+	Annotations  KeyAnnotations `json:"annotations,omitempty"`
 }
 
 type Event struct {

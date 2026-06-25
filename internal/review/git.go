@@ -91,6 +91,62 @@ func readGitChanges(ctx context.Context, root string, baseRef string, headRef st
 	return combineGitChanges(files, lines), nil
 }
 
+func resolveReviewBaseRef(ctx context.Context, root string, provided string) (string, error) {
+	provided = strings.TrimSpace(provided)
+	if provided != "" {
+		return provided, nil
+	}
+
+	for _, candidate := range reviewBaseCandidates(ctx, root) {
+		if gitRefExists(ctx, root, candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("no git base ref found; commit at least once or pass --base <ref>")
+}
+
+func reviewBaseCandidates(ctx context.Context, root string) []string {
+	candidates := []string{}
+	if upstream := currentBranchUpstream(ctx, root); upstream != "" {
+		candidates = append(candidates, upstream)
+	}
+	candidates = append(candidates, "origin/main", "origin/master", "main", "master", "HEAD")
+	return dedupeStrings(candidates)
+}
+
+func currentBranchUpstream(ctx context.Context, root string) string {
+	output, err := runGit(ctx, root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(output)
+}
+
+func gitRefExists(ctx context.Context, root string, ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	command := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	command.Dir = root
+	return command.Run() == nil
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
 func combineGitChanges(files []ChangedFile, lines []ChangedLine) gitChanges {
 	byPath := map[string]ChangedFile{}
 	for _, file := range files {

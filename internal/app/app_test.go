@@ -56,14 +56,55 @@ func TestRootHelpIncludesSchemaCommand(t *testing.T) {
 	for _, expected := range []string{
 		"ghostable schema <command> [options]",
 		"ghostable validate [options]",
+		"ghostable agent <command> [options]",
 		"schema",
 		"Manage validation schema files and rules",
 		"validate",
 		"Check values against schema rules",
+		"agent",
+		"Print agent guidance",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected root help to contain %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestFlagHelpRequestsExitCleanly(t *testing.T) {
+	commands := [][]string{
+		{"setup", "--help"},
+		{"status", "--help"},
+		{"env", "push", "--help"},
+		{"hygiene", "report", "--help"},
+		{"access", "create", "--help"},
+	}
+
+	for _, command := range commands {
+		t.Run(strings.Join(command, " "), func(t *testing.T) {
+			var output bytes.Buffer
+			code := Run(append([]string{"ghostable"}, command...), strings.NewReader(""), &output, &output)
+
+			if code != 0 {
+				t.Fatalf("expected help to exit 0, got %d with output:\n%s", code, output.String())
+			}
+			text := output.String()
+			if !strings.Contains(text, "Usage") || strings.Contains(text, "Error:") {
+				t.Fatalf("expected clean flag help output, got:\n%s", text)
+			}
+		})
+	}
+}
+
+func TestNoColorDisablesAnsiOutput(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "--help"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "\x1b[") {
+		t.Fatalf("expected NO_COLOR output to omit ANSI escapes:\n%s", output.String())
 	}
 }
 
@@ -114,6 +155,9 @@ func TestProjectRootCommandIsUnknown(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `unknown command "project"`) {
 		t.Fatalf("expected project command to be unknown, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghostable status") {
+		t.Fatalf("expected project suggestion, got %v", err)
 	}
 }
 

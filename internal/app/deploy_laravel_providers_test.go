@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ghostable-dev/beta/internal/domain"
 	"github.com/ghostable-dev/beta/internal/store"
 )
 
@@ -171,19 +172,87 @@ func TestRunDeployLaravelVaporUsesVaporTarget(t *testing.T) {
 	}
 }
 
-func TestRunDeployShortProviderTargetsAreNotAccepted(t *testing.T) {
-	setupDeployCommandTest(t)
+func TestRunDeployShortProviderTargetsRouteToProviders(t *testing.T) {
+	root := setupDeployCommandTest(t)
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("production", "APP_NAME", "Ghostable", "test"); err != nil {
+		t.Fatal(err)
+	}
 
-	for _, target := range []string{"forge", "cloud", "vapor"} {
-		t.Run(target, func(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected string
+	}{
+		{name: "cloud", args: []string{"ghostable", "deploy", "cloud", "production", "--dry-run", "--json"}, expected: `"target": "laravel-cloud"`},
+		{name: "vapor", args: []string{"ghostable", "deploy", "vapor", "production", "--dry-run"}, expected: "Ghostable Vapor deploy plan"},
+		{name: "forge", args: []string{"ghostable", "deploy", "forge", "production", "--forge-site", "example.com", "--dry-run", "--json"}, expected: `"target": "laravel-forge"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			runner := NewRunner([]string{"ghostable", "deploy", target, "production", "--dry-run"}, strings.NewReader(""), &output, &output)
-
-			err := runner.Run()
-			if err == nil || !strings.Contains(err.Error(), "usage: ghostable deploy [environment] [options]") {
-				t.Fatalf("expected short provider target %q to be rejected by deploy usage, got %v", target, err)
+			runner := NewRunner(test.args, strings.NewReader(""), &output, &output)
+			if err := runner.Run(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(output.String(), test.expected) {
+				t.Fatalf("expected short provider target to route to %q, got:\n%s", test.expected, output.String())
 			}
 		})
+	}
+}
+
+func TestRunDeployUsesManifestDeployTargetByDefault(t *testing.T) {
+	root := setupDeployCommandTestWithTarget(t, "laravel-cloud")
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("production", "APP_NAME", "Ghostable", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "deploy", "production", "--dry-run", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, `"target": "laravel-cloud"`) || !strings.Contains(text, `"cloudEnvironment": "production"`) {
+		t.Fatalf("expected manifest deploy target to route to Laravel Cloud, got:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("provider deploy dry-run should not write .env, stat err: %v", err)
+	}
+}
+
+func TestRunDeployLocalFileOptionsBypassManifestDeployTarget(t *testing.T) {
+	root := setupDeployCommandTestWithTarget(t, "laravel-cloud")
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetVariable("production", "APP_NAME", "Ghostable", "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "deploy", "production", "--file", ".env.deploy", "--dry-run", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	if strings.Contains(text, `"target": "laravel-cloud"`) {
+		t.Fatalf("expected local file option to bypass provider target, got:\n%s", text)
+	}
+	if !strings.Contains(text, `"file": ".env.deploy"`) || !strings.Contains(text, `"valueOmitted": true`) {
+		t.Fatalf("expected local deploy dry-run JSON, got:\n%s", text)
 	}
 }
 
@@ -247,6 +316,25 @@ func TestRunDeployForgeInvokesLaravelForgeCLI(t *testing.T) {
 		!strings.Contains(text, warn("Forge site:")+" example.com") {
 		t.Fatalf("expected Forge deploy output to include provider success and site details, got:\n%s", text)
 	}
+}
+
+func setupDeployCommandTestWithTarget(t *testing.T, deployTarget string) string {
+	t.Helper()
+	allowProtectedEnvironmentAccessForTest(t)
+	root := setupTempWorkdir(t)
+	_, _, err := store.Setup(".", store.SetupOptions{
+		Name: "Test Project",
+		Environments: []domain.Environment{
+			{Name: "default", Type: "local"},
+			{Name: "production", Type: "production"},
+		},
+		DeviceName:   "test-device",
+		DeployTarget: deployTarget,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func TestRunDeployForgeRejectsProjectLocalForgeCLI(t *testing.T) {

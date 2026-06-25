@@ -54,7 +54,7 @@ func splitFlags(args []string, boolFlags map[string]bool) ([]string, []string, e
 
 		name := flagName(arg)
 		flagArgs = append(flagArgs, arg)
-		if strings.Contains(arg, "=") || boolFlags[name] {
+		if strings.Contains(arg, "=") || boolFlags[name] || isHelpFlag(name) {
 			continue
 		}
 
@@ -74,6 +74,10 @@ func flagName(arg string) string {
 		name = name[:idx]
 	}
 	return name
+}
+
+func isHelpFlag(name string) bool {
+	return name == "h" || name == "help"
 }
 
 func BoolFlags(names ...string) map[string]bool {

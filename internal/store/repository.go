@@ -101,6 +101,7 @@ type AutomationCredentialSummary struct {
 	DeviceID    string                      `json:"deviceId"`
 	Name        string                      `json:"name"`
 	Kind        string                      `json:"kind"`
+	Usage       string                      `json:"usage,omitempty"`
 	Status      string                      `json:"status"`
 	CreatedAt   string                      `json:"createdAt"`
 	Permissions []AutomationCredentialGrant `json:"permissions"`
@@ -113,6 +114,7 @@ type AutomationCredentialResult struct {
 	Token               string                      `json:"token"`
 	EnvironmentVariable string                      `json:"environmentVariable"`
 	Files               []string                    `json:"files"`
+	NextSteps           []string                    `json:"nextSteps"`
 	Completed           bool                        `json:"completed"`
 }
 
@@ -487,11 +489,15 @@ func (r Repository) CreateAutomationCredential(name string, kind string, grants 
 	if kind == "" {
 		kind = "ci"
 	}
+	usage := kind
 	if kind == "deploy" {
 		kind = "access"
 	}
 	if !oneOf(kind, "agent", "ci", "access") {
-		return AutomationCredentialResult{}, fmt.Errorf("kind must be agent, ci, or access")
+		return AutomationCredentialResult{}, fmt.Errorf("kind must be deploy, agent, ci, or access")
+	}
+	if usage == "" {
+		usage = kind
 	}
 
 	permissions, err := r.normalizeAutomationCredentialGrants(grants)
@@ -548,6 +554,7 @@ func (r Repository) CreateAutomationCredential(name string, kind string, grants 
 			DeviceID:    device.ID,
 			Name:        name,
 			Kind:        kind,
+			Usage:       usage,
 			Status:      device.Status,
 			CreatedAt:   device.CreatedAt,
 			Permissions: permissions,
@@ -555,7 +562,12 @@ func (r Repository) CreateAutomationCredential(name string, kind string, grants 
 		Token:               automationCredentialTokenPrefix + base64.RawURLEncoding.EncodeToString(encoded),
 		EnvironmentVariable: automationCredentialEnvironmentVariable,
 		Files:               automationCredentialFiles(device.ID, permissions),
-		Completed:           true,
+		NextSteps: []string{
+			"Store this token as GHOSTABLE_CI_TOKEN in your deploy or automation system.",
+			"Commit the listed .ghostable files.",
+			"Run a dry-run deploy or pull command before enabling writes.",
+		},
+		Completed: true,
 	}, nil
 }
 

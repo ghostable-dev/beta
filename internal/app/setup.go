@@ -28,10 +28,15 @@ func (r *Runner) runSetup(args []string) error {
 	deployTarget := fs.String("deploy-target", "", "Project deployment target hint")
 	activityMode := fs.String("activity-mode", domain.DefaultActivity, "Signed activity mode: off, minimal, or full")
 	force := fs.Bool("force", false, "Overwrite an existing Ghostable manifest")
+	seedDotenv := fs.Bool("seed-dotenv", false, "Import values from .env into the default environment")
+	noSeedDotenv := fs.Bool("no-seed-dotenv", false, "Do not import values from .env during setup")
 	fs.Bool("no-metadata", false, "Deprecated; metadata prompts are not used by this client")
 	jsonOut := fs.Bool("json", false, "Print setup result as JSON")
-	if _, err := cli.Parse(fs, args, cli.BoolFlags("force", "no-metadata", "json")); err != nil {
+	if _, err := cli.Parse(fs, args, cli.BoolFlags("force", "seed-dotenv", "no-seed-dotenv", "no-metadata", "json")); err != nil {
 		return err
+	}
+	if *seedDotenv && *noSeedDotenv {
+		return fmt.Errorf("pass --seed-dotenv or --no-seed-dotenv, not both")
 	}
 
 	if !*force {
@@ -67,7 +72,7 @@ func (r *Runner) runSetup(args []string) error {
 		envs = append(envs, domain.Environment{Name: name, Type: environmentType(name)})
 	}
 
-	dotenvSeed, err := r.promptDefaultDotenvSeed(envs, *jsonOut)
+	dotenvSeed, err := r.resolveDefaultDotenvSeed(envs, *jsonOut, *seedDotenv, *noSeedDotenv)
 	if err != nil {
 		return err
 	}
@@ -146,11 +151,38 @@ type defaultDotenvSeed struct {
 	values map[string]store.VariablePutInput
 }
 
+func (r *Runner) resolveDefaultDotenvSeed(envs []domain.Environment, jsonOut bool, seedDotenv bool, noSeedDotenv bool) (*defaultDotenvSeed, error) {
+	if noSeedDotenv || !setupHasDefaultEnvironment(envs) {
+		return nil, nil
+	}
+	if seedDotenv {
+		return readDefaultDotenvSeed()
+	}
+	return r.promptDefaultDotenvSeed(envs, jsonOut)
+}
+
 func (r *Runner) promptDefaultDotenvSeed(envs []domain.Environment, jsonOut bool) (*defaultDotenvSeed, error) {
 	if jsonOut || !r.interactive || !setupHasDefaultEnvironment(envs) {
 		return nil, nil
 	}
 
+	seed, err := readDefaultDotenvSeed()
+	if err != nil || seed == nil {
+		return seed, err
+	}
+
+	useDotenv, err := r.prompts.Confirm("A .env file was detected in this project directory. Use it as the starting values for the default environment?", true)
+	if err != nil {
+		return nil, err
+	}
+	if !useDotenv {
+		return nil, nil
+	}
+
+	return seed, nil
+}
+
+func readDefaultDotenvSeed() (*defaultDotenvSeed, error) {
 	path := filepath.Join(mustGetwd(), ".env")
 	info, err := os.Stat(path)
 	if err != nil {
@@ -160,14 +192,6 @@ func (r *Runner) promptDefaultDotenvSeed(envs []domain.Environment, jsonOut bool
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, nil
-	}
-
-	useDotenv, err := r.prompts.Confirm("A .env file was detected in this project directory. Use it as the starting values for the default environment?", true)
-	if err != nil {
-		return nil, err
-	}
-	if !useDotenv {
 		return nil, nil
 	}
 

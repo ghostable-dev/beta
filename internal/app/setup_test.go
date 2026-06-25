@@ -138,6 +138,40 @@ func TestRunSetupSeedsDefaultEnvironmentFromDotenvWhenConfirmed(t *testing.T) {
 	}
 }
 
+func TestRunSetupSeedsDefaultEnvironmentFromDotenvFlag(t *testing.T) {
+	root := setupTempWorkdir(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("APP_NAME=Ghostable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{
+		"ghostable", "setup",
+		"--name", "Test Project",
+		"--device-name", "test-device",
+		"--seed-dotenv",
+		"--json",
+	}, strings.NewReader(""), &output, &output)
+	if err := runner.runSetup(runner.args[2:]); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := repo.ReadVariables("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["APP_NAME"].Value != "Ghostable" {
+		t.Fatalf("expected APP_NAME to be seeded, got %#v", values)
+	}
+	if !strings.Contains(output.String(), `"seededFrom"`) {
+		t.Fatalf("expected setup JSON to include seeded result, got:\n%s", output.String())
+	}
+}
+
 func TestRunStatusPrintsBannerAndInventory(t *testing.T) {
 	setupTempWorkdir(t)
 	repo, _, err := store.Setup(".", store.SetupOptions{

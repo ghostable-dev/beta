@@ -72,6 +72,11 @@ func Review(ctx context.Context, input ReviewInput) (Report, error) {
 		return Report{}, err
 	}
 
+	input.BaseRef, err = resolveReviewBaseRef(ctx, repo.Root, input.BaseRef)
+	if err != nil {
+		return Report{}, err
+	}
+
 	reportStatus(input, "Reading git changes")
 	changes, err := readGitChanges(ctx, repo.Root, input.BaseRef, input.HeadRef)
 	if err != nil {
@@ -97,6 +102,8 @@ func Review(ctx context.Context, input ReviewInput) (Report, error) {
 		ChangedFiles:     changes.Files,
 		References:       buildReferencedKeys(references, environments, inventories, schemaKeys, exampleKeys, exampleExists),
 		ChangedVariables: changedVariables,
+		Errors:           []Finding{},
+		Warnings:         []Finding{},
 	}
 
 	report.addFindings(inventoryFindings)
@@ -134,9 +141,6 @@ func reportStatus(input ReviewInput, message string) {
 func normalizeReviewInput(input ReviewInput) ReviewInput {
 	if strings.TrimSpace(input.Root) == "" {
 		input.Root = "."
-	}
-	if strings.TrimSpace(input.BaseRef) == "" {
-		input.BaseRef = "origin/main"
 	}
 	input.BaseRef = strings.TrimSpace(input.BaseRef)
 	input.HeadRef = strings.TrimSpace(input.HeadRef)

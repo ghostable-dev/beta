@@ -181,6 +181,7 @@ func (r *Runner) runAutomationCredentialCreate(args []string, defaultKind string
 	printAccessDetailRows(r.out, []accessDetailRow{
 		{Label: "Credential", Value: result.Credential.Name},
 		{Label: "Kind", Value: result.Credential.Kind},
+		{Label: "Usage", Value: credentialUsageDisplay(result.Credential.Usage)},
 		{Label: "Device ID", Value: result.Credential.DeviceID},
 		{Label: "Status", Value: deviceStatusDisplay(result.Credential.Status)},
 		{Label: "Created", Value: historyTimeDisplay(result.Credential.CreatedAt)},
@@ -192,6 +193,14 @@ func (r *Runner) runAutomationCredentialCreate(args []string, defaultKind string
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Store this token as GHOSTABLE_CI_TOKEN. It contains the credential private keys and will not be shown again."))
 	return nil
+}
+
+func credentialUsageDisplay(usage string) string {
+	usage = strings.TrimSpace(usage)
+	if usage == "" {
+		return "-"
+	}
+	return usage
 }
 
 func (r *Runner) resolveCredentialGrants(repo store.Repository, inputs []string) ([]store.AutomationCredentialGrant, error) {
@@ -337,7 +346,7 @@ func agentInstructions() string {
 		"Use Ghostable for local encrypted environment management.",
 		"",
 		"- Prefer `ghostable ... --json` for machine-readable workflows.",
-		"- Treat `ghostable agents capabilities --json` as the safe default command allowlist.",
+		"- Treat `ghostable agent capabilities --json` as the safe default command allowlist.",
 		"- Do not print secret values unless the user explicitly asks for `--show-values`.",
 		"- Prefer `ghostable env diff --env <env> --file <path> --json` or `ghostable env diff --from <source-env> --to <target-env> --json` before changing encrypted state.",
 		"- Include `--reason` when pushing, syncing, deleting, or promoting variables.",

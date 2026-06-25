@@ -41,6 +41,9 @@ func printRunError(err error, errOut io.Writer) int {
 		fmt.Fprintln(errOut, warn("Canceled."))
 		return 130
 	}
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
 	var exitErr commandExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.Code
@@ -127,10 +130,23 @@ func (r *Runner) Run() error {
 	case "deploy":
 		return r.runDeploy(args[2:])
 	default:
-		return fmt.Errorf("unknown command %q", args[1])
+		return unknownCommandError(args[1])
 	}
 
 	return nil
+}
+
+func unknownCommandError(command string) error {
+	suggestions := map[string]string{
+		"project": "Run `ghostable status` to inspect the current project or `ghostable setup` to initialize one.",
+		"copy":    "Run `ghostable env duplicate <source> <target>` to copy an environment.",
+		"login":   "Ghostable is local-first and does not use login; run `ghostable setup` inside a project.",
+		"logout":  "Ghostable is local-first and does not use logout; run `ghostable access leave` to remove this machine's local access.",
+	}
+	if suggestion, ok := suggestions[command]; ok {
+		return fmt.Errorf("unknown command %q. %s", command, suggestion)
+	}
+	return fmt.Errorf("unknown command %q. Run `ghostable --help` for available commands", command)
 }
 
 func rootPromptHeading() string {
@@ -142,19 +158,26 @@ func accent(value string) string {
 }
 
 func success(value string) string {
-	return "\033[32m" + value + "\033[0m"
+	return colorize("32", value)
 }
 
 func warn(value string) string {
-	return "\033[33m" + value + "\033[0m"
+	return colorize("33", value)
 }
 
 func muted(value string) string {
-	return "\033[2m" + value + "\033[0m"
+	return colorize("2", value)
 }
 
 func danger(value string) string {
-	return "\033[31m" + value + "\033[0m"
+	return colorize("31", value)
+}
+
+func colorize(code string, value string) string {
+	if os.Getenv("NO_COLOR") != "" {
+		return value
+	}
+	return "\033[" + code + "m" + value + "\033[0m"
 }
 
 type commandOption struct {
@@ -174,7 +197,7 @@ var rootCommandOptions = []commandOption{
 	{Label: "deploy", Description: "Write decrypted values for deploy scripts"},
 	{Label: "example", Description: "Generate .env.example from encrypted state and code"},
 	{Label: "hygiene", Description: "Report stale, unused, and rotation-due secrets"},
-	{Label: "agents", Value: "agent", Description: "Print agent guidance"},
+	{Label: "agent", Description: "Print agent guidance"},
 	{Label: "access", Description: "Manage devices and access grants"},
 }
 
@@ -270,7 +293,7 @@ func (r *Runner) printRootHelp() {
 	fmt.Fprintln(r.out, "  ghostable deploy [environment] [options]")
 	fmt.Fprintln(r.out, "  ghostable example <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable hygiene [command] [options]")
-	fmt.Fprintln(r.out, "  ghostable agents <command> [options]")
+	fmt.Fprintln(r.out, "  ghostable agent <command> [options]")
 	fmt.Fprintln(r.out, "  ghostable access <command> [options]")
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, warn("Core commands:"))
@@ -286,6 +309,7 @@ func newFlagSet(name string, errOut io.Writer) *flag.FlagSet {
 func printJSON(out io.Writer, value interface{}) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
 	return encoder.Encode(value)
 }
 

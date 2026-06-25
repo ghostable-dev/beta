@@ -53,7 +53,8 @@ ghostable setup
 
 `setup` is interactive. It prompts for project and device details, creates the
 `default` environment, and asks whether to seed that environment from an
-existing `.env` file.
+existing `.env` file. Automation can pass `--seed-dotenv` or
+`--no-seed-dotenv` to make that choice explicit.
 
 ## Build
 
@@ -70,14 +71,15 @@ ghostable env diff --env default --file .env
 ghostable env diff --from staging --to production
 ghostable validate --env default
 ghostable hygiene report --env production
-ghostable review --base origin/main --env production
+ghostable review --env production
 ghostable deploy production
 ```
 
 Most options can be omitted in an interactive terminal. Ghostable prompts for
 project and device details when needed, and creates the `default` environment
 automatically. If `.env` exists, setup asks whether to seed `default` from it.
-Automation and agents should pass flags and prefer `--json`.
+Automation and agents should pass flags, use `--seed-dotenv` or
+`--no-seed-dotenv` when setup should be non-interactive, and prefer `--json`.
 
 ## Commands
 
@@ -88,15 +90,17 @@ Automation and agents should pass flags and prefer `--json`.
   manages environment-level workflows.
 - `validate` checks environment values against schema rules.
 - `review` runs changed-code ENV checks and local hard-coded secret scanning.
-- `deploy [environment]` writes decrypted values to `.env` for deploy scripts.
+- `deploy [target] [environment]` writes decrypted values to `.env` or syncs a
+  configured provider target.
 - `var push|pull|promote|delete|history|context|annotation`
   manages a single variable and its key metadata.
 - `schema file|rule|key` manages local validation schema files.
 - `hygiene report|rotation|suppress|rotate`
   manages operational hygiene checks, rotation policy, suppressions, and
   environment encryption key rotation.
-- `device create|join|list|status|approvers|share|grants|revoke` manages local device
-  records, scoped automation devices, and policy grants.
+- `access create|list|status|approvers|share|grants|revoke` manages scoped
+  automation credentials and policy grants.
+- `device join|list|status` manages human device records.
 - `agent init|instructions|capabilities` emits safe instructions and a
   recommended read-only/dry-run command allowlist for coding agents.
 
@@ -154,6 +158,11 @@ rotation:
 
 `ghostable review` is the local review command. By default, it checks changed
 code for both ENV usage drift and hard-coded secrets.
+
+When `--base` is omitted, Ghostable uses the current branch upstream when
+available, then `origin/main`, `origin/master`, `main`, `master`, and finally
+`HEAD`. CI jobs can still pass an explicit `--base <ref>` for a fixed
+comparison point.
 
 For ENV usage drift, it scans changed lines for common ENV access patterns in
 PHP/Laravel, JavaScript/TypeScript/Node, Go, Python, Ruby/Rails, Java, C#,
@@ -224,8 +233,17 @@ Ghostable backup files. It keeps `.env.example` files by default; pass
 ## Deploy Scripts
 
 `ghostable deploy production` decrypts the selected environment and writes it to
-`.env`. It replaces `.env` by default so stale deploy values do not survive
-between runs. Use `--merge` when an existing file should be preserved.
+`.env` unless the project manifest has a provider `deployTarget`, in which case
+the configured provider is used by default. It replaces `.env` by default so
+stale deploy values do not survive between runs. Use `--merge` when an existing
+file should be preserved.
+
+Use the explicit local target when a project has a provider target but a script
+needs a local env file:
+
+```sh
+ghostable deploy local production
+```
 
 Provider targets use `ghostable deploy <target> [environment] [options]`:
 
@@ -233,6 +251,14 @@ Provider targets use `ghostable deploy <target> [environment] [options]`:
 ghostable deploy laravel-forge production
 ghostable deploy laravel-vapor production
 ghostable deploy laravel-cloud production
+```
+
+Short aliases are also accepted:
+
+```sh
+ghostable deploy forge production
+ghostable deploy vapor production
+ghostable deploy cloud production
 ```
 
 Laravel Vapor deploys selected Ghostable values to Vapor environment variables:
@@ -284,7 +310,13 @@ ghostable access create --name deploy-bot --kind deploy --grant production:reade
 ```
 
 Store the returned token as `GHOSTABLE_CI_TOKEN` in the deploy system, commit
-the updated `.ghostable/` files, then run:
+the updated `.ghostable/` files, then run a dry-run before enabling writes:
+
+```sh
+ghostable deploy production --dry-run --json
+```
+
+When the dry-run is correct, run:
 
 ```sh
 ghostable deploy production
