@@ -26,6 +26,10 @@ type VariablePutInput struct {
 }
 
 func (r Repository) PutVariablesWithMetadata(env string, inputs map[string]VariablePutInput, options PutOptions) (PushResult, error) {
+	return r.PutVariablesWithMetadataOrdered(env, inputs, nil, options)
+}
+
+func (r Repository) PutVariablesWithMetadataOrdered(env string, inputs map[string]VariablePutInput, orderedKeys []string, options PutOptions) (PushResult, error) {
 	if err := r.requireEnvironment(env); err != nil {
 		return PushResult{}, err
 	}
@@ -39,7 +43,7 @@ func (r Repository) PutVariablesWithMetadata(env string, inputs map[string]Varia
 	}
 
 	result := PushResult{Environment: env}
-	if err := r.writeIncomingVariables(env, inputs, current, options.Reason, &result); err != nil {
+	if err := r.writeIncomingVariables(env, inputs, orderedKeys, current, options.Reason, &result); err != nil {
 		return PushResult{}, err
 	}
 
@@ -62,8 +66,9 @@ func (r Repository) PutVariablesWithMetadata(env string, inputs map[string]Varia
 	return result, nil
 }
 
-func (r Repository) writeIncomingVariables(env string, incoming map[string]VariablePutInput, current map[string]domain.Variable, reason string, result *PushResult) error {
-	for key, input := range incoming {
+func (r Repository) writeIncomingVariables(env string, incoming map[string]VariablePutInput, orderedKeys []string, current map[string]domain.Variable, reason string, result *PushResult) error {
+	for _, key := range orderedIncomingVariableKeys(incoming, orderedKeys) {
+		input := incoming[key]
 		if err := validateKey(key); err != nil {
 			return err
 		}
@@ -109,6 +114,32 @@ func (r Repository) writeIncomingVariables(env string, incoming map[string]Varia
 		}
 	}
 	return nil
+}
+
+func orderedIncomingVariableKeys(incoming map[string]VariablePutInput, orderedKeys []string) []string {
+	keys := make([]string, 0, len(incoming))
+	seen := make(map[string]bool, len(incoming))
+	for _, key := range orderedKeys {
+		if seen[key] {
+			continue
+		}
+		if _, ok := incoming[key]; !ok {
+			continue
+		}
+		keys = append(keys, key)
+		seen[key] = true
+	}
+
+	remaining := make([]string, 0, len(incoming)-len(keys))
+	for key := range incoming {
+		if seen[key] {
+			continue
+		}
+		remaining = append(remaining, key)
+	}
+	sort.Strings(remaining)
+	keys = append(keys, remaining...)
+	return keys
 }
 
 func (result *PushResult) addChangedVariable(key string, exists bool, changed bool) {

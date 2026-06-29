@@ -140,7 +140,7 @@ func TestRunSetupSeedsDefaultEnvironmentFromDotenvWhenConfirmed(t *testing.T) {
 
 func TestRunSetupSeedsDefaultEnvironmentFromDotenvFlag(t *testing.T) {
 	root := setupTempWorkdir(t)
-	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("APP_NAME=Ghostable\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("APP_NAME=Ghostable\nAPP_KEY=super-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -166,6 +166,13 @@ func TestRunSetupSeedsDefaultEnvironmentFromDotenvFlag(t *testing.T) {
 	}
 	if values["APP_NAME"].Value != "Ghostable" {
 		t.Fatalf("expected APP_NAME to be seeded, got %#v", values)
+	}
+	if values["APP_KEY"].Value != "super-secret" {
+		t.Fatalf("expected APP_KEY to be seeded, got %#v", values)
+	}
+	keyMetadata := readKeyMetadataForTest(t, root, "default")
+	if keyMetadata["APP_NAME"].Position != 1000 || keyMetadata["APP_KEY"].Position != 2000 {
+		t.Fatalf("expected setup seed positions to follow .env order, got %#v", keyMetadata)
 	}
 	if !strings.Contains(output.String(), `"seededFrom"`) {
 		t.Fatalf("expected setup JSON to include seeded result, got:\n%s", output.String())

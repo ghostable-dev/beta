@@ -97,7 +97,7 @@ func (r *Runner) runSetup(args []string) error {
 	var seedResult *store.PushResult
 	if dotenvSeed != nil && len(dotenvSeed.values) > 0 {
 		r.printProgress(!*jsonOut, fmt.Sprintf("Encrypting %d variable%s from %s", len(dotenvSeed.values), plural(len(dotenvSeed.values)), dotenvSeed.file))
-		result, err := repo.PutVariablesWithMetadata(domain.DefaultEnvName, dotenvSeed.values, store.PutOptions{Reason: "Seeded from .env during setup"})
+		result, err := repo.PutVariablesWithMetadataOrdered(domain.DefaultEnvName, dotenvSeed.values, dotenvSeed.keys, store.PutOptions{Reason: "Seeded from .env during setup"})
 		if err != nil {
 			return err
 		}
@@ -149,6 +149,7 @@ func (r *Runner) printSetupResult(repo store.Repository, dotenvSeed *defaultDote
 type defaultDotenvSeed struct {
 	file   string
 	values map[string]store.VariablePutInput
+	keys   []string
 }
 
 func (r *Runner) resolveDefaultDotenvSeed(envs []domain.Environment, jsonOut bool, seedDotenv bool, noSeedDotenv bool) (*defaultDotenvSeed, error) {
@@ -195,11 +196,11 @@ func readDefaultDotenvSeed() (*defaultDotenvSeed, error) {
 		return nil, nil
 	}
 
-	values, err := readDotenvVariableInputs(path)
+	values, keys, err := readDotenvVariableInputsAndKeys(path)
 	if err != nil {
 		return nil, err
 	}
-	return &defaultDotenvSeed{file: ".env", values: values}, nil
+	return &defaultDotenvSeed{file: ".env", values: values, keys: keys}, nil
 }
 
 func setupHasDefaultEnvironment(envs []domain.Environment) bool {

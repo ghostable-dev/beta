@@ -475,6 +475,43 @@ func TestRepositoryWritesSignedKeyMetadataForVariables(t *testing.T) {
 	}
 }
 
+func TestRepositoryPutVariablesWithMetadataOrderedUsesProvidedOrder(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))
+
+	repo, _, err := Setup(root, SetupOptions{
+		Name:         "Test Project",
+		Environments: []domain.Environment{{Name: "local", Type: "local"}},
+		DeviceName:   "test-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inputs := map[string]VariablePutInput{
+		"APP_NAME": {Value: "Ghostable"},
+		"ALPHA":    {Value: "one"},
+		"BETA":     {Value: "two"},
+		"GAMMA":    {Value: "three"},
+	}
+	if _, err := repo.PutVariablesWithMetadataOrdered("local", inputs, []string{"APP_NAME", "ALPHA"}, PutOptions{Reason: "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedPositions := map[string]int64{
+		"APP_NAME": 1000,
+		"ALPHA":    2000,
+		"BETA":     3000,
+		"GAMMA":    4000,
+	}
+	for key, expectedPosition := range expectedPositions {
+		record := readKeyMetadataRecordForTest(t, repo, "local", key)
+		if record.Position != expectedPosition {
+			t.Fatalf("expected position %d for %s, got %#v", expectedPosition, key, record)
+		}
+	}
+}
+
 func TestRepositoryOmitsDeployMetadata(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GHOSTABLE_KEYSTORE", filepath.Join(root, "keys"))

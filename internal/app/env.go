@@ -463,7 +463,7 @@ func (r *Runner) runEnvPush(args []string, syncMode bool) error {
 	if *file == "" {
 		*file = envFileDefault(selected)
 	}
-	values, err := readDotenvVariableInputs(repoFilePath(repo.Root, *file))
+	values, keys, err := readDotenvVariableInputsAndKeys(repoFilePath(repo.Root, *file))
 	if err != nil {
 		return err
 	}
@@ -478,7 +478,7 @@ func (r *Runner) runEnvPush(args []string, syncMode bool) error {
 			return err
 		}
 	}
-	result, err := repo.PutVariablesWithMetadata(selected, values, storePut(changeReason, *syncFlag))
+	result, err := repo.PutVariablesWithMetadataOrdered(selected, values, keys, storePut(changeReason, *syncFlag))
 	if err != nil {
 		return err
 	}
@@ -935,8 +935,8 @@ func (r *Runner) runEnvLayout(args []string) error {
 		for key := range values {
 			keys = append(keys, key)
 		}
+		sortStrings(keys)
 	}
-	sortStrings(keys)
 	if err := repo.GenerateLayout(selected, keys); err != nil {
 		return err
 	}
@@ -1078,11 +1078,6 @@ func readDotenvFile(file string) (map[string]string, error) {
 	return dotenv.ParseString(string(content))
 }
 
-func readDotenvVariableInputs(file string) (map[string]store.VariablePutInput, error) {
-	values, _, err := readDotenvVariableInputsAndKeys(file)
-	return values, err
-}
-
 func readDotenvVariableInputsAndKeys(file string) (map[string]store.VariablePutInput, []string, error) {
 	parsed, err := readDotenvEntries(file)
 	if err != nil {
@@ -1155,7 +1150,7 @@ func seedEnvironmentFromInputs(repo store.Repository, target string, values map[
 	if mode == "insensitive" {
 		values = filterInsensitiveVariableInputs(values)
 	}
-	pushed, err := repo.PutVariablesWithMetadata(target, values, storePut(reason, false))
+	pushed, err := repo.PutVariablesWithMetadataOrdered(target, values, keys, storePut(reason, false))
 	if err != nil {
 		return result, err
 	}

@@ -481,6 +481,31 @@ func TestRunEnvRunPropagatesChildExitCode(t *testing.T) {
 	}
 }
 
+func TestRunEnvLayoutGeneratePreservesFileOrder(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	if err := os.WriteFile(filepath.Join(root, ".env.order"), []byte("BETA=two\nAPP_NAME=Ghostable\nALPHA=one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "layout", "generate", "--env", "default", "--file", ".env.order", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runEnvLayout(runner.args[3:]); err != nil {
+		t.Fatal(err)
+	}
+
+	keyMetadata := readKeyMetadataForTest(t, root, "default")
+	expectedPositions := map[string]int64{
+		"BETA":     1000,
+		"APP_NAME": 2000,
+		"ALPHA":    3000,
+	}
+	for key, expectedPosition := range expectedPositions {
+		if keyMetadata[key].Position != expectedPosition {
+			t.Fatalf("expected layout position %d for %s from .env order, got %#v", expectedPosition, key, keyMetadata[key])
+		}
+	}
+}
+
 func TestEnvHelpHidesInternalCommands(t *testing.T) {
 	setupRepoForEnvCommandTest(t)
 
@@ -818,6 +843,10 @@ func TestRunEnvCreateFromFileCopiesCommentedMetadata(t *testing.T) {
 	if variables["APP_NAME"].Value != "Ghostable" || variables["APP_NAME"].Commented {
 		t.Fatalf("expected active file seed metadata, got %#v", variables["APP_NAME"])
 	}
+	keyMetadata := readKeyMetadataForTest(t, root, "staging")
+	if keyMetadata["APP_KEY"].Position != 1000 || keyMetadata["APP_NAME"].Position != 2000 {
+		t.Fatalf("expected file seed positions to follow .env order, got %#v", keyMetadata)
+	}
 }
 
 func TestRunEnvCreateFromEnvCanCopyKeysOnly(t *testing.T) {
@@ -1002,6 +1031,32 @@ func TestRunEnvPushAcceptsAbsoluteFilePath(t *testing.T) {
 		t.Fatal(err)
 	} else if exists {
 		t.Fatal("did not expect raw app-name key to be stored")
+	}
+}
+
+func TestRunEnvPushPreservesFileOrderInKeyMetadata(t *testing.T) {
+	root := setupRepoForEnvCommandTest(t)
+	envFile := filepath.Join(t.TempDir(), ".env.seed")
+	if err := os.WriteFile(envFile, []byte("APP_NAME=Ghostable\nAPP_KEY=super-secret\nBETA=two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	runner := NewRunner([]string{"ghostable", "env", "push", "--env", "default", "--file", envFile, "--assume-yes", "--json"}, strings.NewReader(""), &output, &output)
+	if err := runner.runEnvPush(runner.args[3:], false); err != nil {
+		t.Fatal(err)
+	}
+
+	keyMetadata := readKeyMetadataForTest(t, root, "default")
+	expectedPositions := map[string]int64{
+		"APP_NAME": 1000,
+		"APP_KEY":  2000,
+		"BETA":     3000,
+	}
+	for key, expectedPosition := range expectedPositions {
+		if keyMetadata[key].Position != expectedPosition {
+			t.Fatalf("expected position %d for %s from .env order, got %#v", expectedPosition, key, keyMetadata[key])
+		}
 	}
 }
 
